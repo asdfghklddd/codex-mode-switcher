@@ -62,10 +62,14 @@ function Invoke-SwitchPython {
 
     $python = Get-Command python -ErrorAction SilentlyContinue
     if (-not $python) {
-        throw "python was not found on PATH. This switcher needs Python's built-in sqlite3 module."
+        $python = Get-Command python3 -ErrorAction SilentlyContinue
+    }
+    if (-not $python) {
+        throw "python/python3 was not found on PATH. This switcher needs Python's built-in sqlite3 module."
     }
 
-    $temp = Join-Path $env:TEMP "switch_codex_mode_$([Guid]::NewGuid().ToString('N')).py"
+    $tempRoot = [System.IO.Path]::GetTempPath()
+    $temp = Join-Path $tempRoot "switch_codex_mode_$([Guid]::NewGuid().ToString('N')).py"
     Set-Content -LiteralPath $temp -Value $PythonCode -Encoding UTF8
     try {
         $output = & $python.Source $temp @Arguments
@@ -111,17 +115,36 @@ def strip_long_prefix(path):
     path = str(path)
     if path.startswith("\\\\?\\"):
         path = path[4:]
-    return str(pathlib.PureWindowsPath(path))
+    return path
+
+
+def is_windows_path(path):
+    path = strip_long_prefix(path)
+    return bool(re.match(r"^[A-Za-z]:[\\/]", path)) or path.startswith("\\\\")
+
+
+def display_path(path):
+    path = strip_long_prefix(path)
+    if is_windows_path(path) or "\\" in path:
+        return str(pathlib.PureWindowsPath(path))
+    return str(pathlib.PurePosixPath(path))
+
+
+def path_compare_key(path):
+    path = display_path(path).replace("\\", "/").rstrip("/")
+    if is_windows_path(path):
+        path = path.casefold()
+    return path
 
 
 def norm_key(path):
-    return strip_long_prefix(path).rstrip("\\").lower()
+    return path_compare_key(path)
 
 
 def under(child, parent):
     child_key = norm_key(child)
     parent_key = norm_key(parent)
-    return child_key == parent_key or child_key.startswith(parent_key + "\\")
+    return child_key == parent_key or child_key.startswith(parent_key + "/")
 
 
 def get_top_provider(config):
@@ -359,12 +382,12 @@ def rebuild_state(codex_home, doc_root, rows):
         return {"state_updated": False}
 
     data = json.loads(read_text(state_path))
-    saved_roots = [strip_long_prefix(x) for x in data.get("electron-saved-workspace-roots", [])]
-    project_order = [strip_long_prefix(x) for x in data.get("project-order", [])]
-    doc_root = strip_long_prefix(doc_root)
+    saved_roots = [display_path(x) for x in data.get("electron-saved-workspace-roots", [])]
+    project_order = [display_path(x) for x in data.get("project-order", [])]
+    doc_root = display_path(doc_root)
 
     def choose_root(cwd):
-        cwd = strip_long_prefix(cwd)
+        cwd = display_path(cwd)
         if under(cwd, doc_root):
             return doc_root
         candidates = [root for root in saved_roots if under(cwd, root)]
