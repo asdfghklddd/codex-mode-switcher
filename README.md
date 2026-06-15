@@ -12,7 +12,6 @@ Windows desktop switcher for keeping Codex Desktop sessions visible across three
 - `Switch-CodexMode.sh`: macOS/Linux command-line wrapper.
 - `Switch-CodexMode.command`: macOS Finder double-click wrapper.
 - `Switch-CodexMode.ps1`: main switch logic.
-- `legacy-Switch-CodexMode-*.bat`: old one-click wrappers kept for compatibility.
 - `tests/Invoke-SwitcherSelfTest.ps1`: temp-fixture self-test for config, SQLite, JSONL, and POSIX path handling.
 
 ## Usage
@@ -22,10 +21,10 @@ Double-click `Switch-CodexMode.bat`, choose a mode, then close and reopen Codex 
 Command-line shortcuts are also supported:
 
 ```powershell
-.\Switch-CodexMode.bat normal
-.\Switch-CodexMode.bat cockpit
-.\Switch-CodexMode.bat ccswitch
-.\Switch-CodexMode.bat status
+.\Switch-CodexMode.bat 1
+.\Switch-CodexMode.bat 2
+.\Switch-CodexMode.bat 3
+.\Switch-CodexMode.bat 4
 ```
 
 ## macOS Usage

@@ -274,6 +274,17 @@ def sqlite_counts(cur):
     return rows
 
 
+def sqlite_provider_counts(cur):
+    return {
+        (row[0] or "<missing>"): row[1]
+        for row in cur.execute("""
+            select model_provider, count(*) as n
+            from threads
+            group by model_provider
+        """)
+    }
+
+
 def rollout_roots(codex_home):
     roots = [codex_home / "sessions", codex_home / "archived_sessions"]
     return [root for root in roots if root.exists()]
@@ -306,6 +317,7 @@ def rewrite_rollout_session_meta_providers(codex_home, from_providers, to_provid
     changed = 0
     errors = []
     from_providers = set(from_providers)
+    changed_by_provider = {provider: 0 for provider in from_providers}
 
     for path in iter_rollout_paths(codex_home):
         scanned += 1
@@ -329,7 +341,9 @@ def rewrite_rollout_session_meta_providers(codex_home, from_providers, to_provid
 
             payload = obj.get("payload") if isinstance(obj, dict) else None
             if obj.get("type") == "session_meta" and isinstance(payload, dict):
-                if payload.get("model_provider") in from_providers:
+                current_provider = payload.get("model_provider")
+                if current_provider in from_providers:
+                    changed_by_provider[current_provider] = changed_by_provider.get(current_provider, 0) + 1
                     payload["model_provider"] = to_provider
                     line = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
                     file_changed = True
@@ -343,6 +357,11 @@ def rewrite_rollout_session_meta_providers(codex_home, from_providers, to_provid
     return {
         "rollout_files_scanned": scanned,
         "rollout_files_changed": changed,
+        "rollout_rewrites_by_provider": [
+            {"model_provider": provider, "count": count}
+            for provider, count in sorted(changed_by_provider.items())
+            if count
+        ],
         "rollout_rewrite_errors": errors[:10],
     }
 
@@ -487,10 +506,16 @@ def update_threads(codex_home, mode, cockpit_provider, cc_switch_provider, opena
     columns = table_columns(cur, "threads")
     provider_updates = 0
     visible_marked = 0
+    before_provider_totals = sqlite_provider_counts(cur) if {"model_provider"} <= columns else {}
 
     target_provider, source_providers = provider_rewrite_plan(
         mode, cockpit_provider, cc_switch_provider, openai_provider
     )
+    provider_updates_by_source = [
+        {"model_provider": provider, "count": before_provider_totals.get(provider, 0)}
+        for provider in source_providers
+        if before_provider_totals.get(provider, 0)
+    ]
 
     if {"model_provider"} <= columns and target_provider and source_providers:
         placeholders = ",".join("?" for _ in source_providers)
@@ -534,16 +559,21 @@ def update_threads(codex_home, mode, cockpit_provider, cc_switch_provider, opena
         rollout_result = rewrite_rollout_session_meta_providers(
             codex_home, source_providers, target_provider, backup_dir
         )
+    rollout_counts = rollout_provider_counts(codex_home)
 
     return {
         "db_present": True,
         "db_updated": True,
+        "target_provider": target_provider,
+        "source_providers": source_providers,
         "provider_updates": provider_updates,
+        "provider_updates_by_source": provider_updates_by_source,
         "visible_marked": visible_marked,
         "visible_rows": len(rows),
         "provider_counts": counts,
         **state_result,
         **rollout_result,
+        **rollout_counts,
     }
 
 
@@ -686,46 +716,96 @@ if ($SkipThreadRewrite) {
 $jsonText = Invoke-SwitchPython -PythonCode $PythonCode -Arguments $argsForPython
 $result = $jsonText | ConvertFrom-Json
 
-Write-Host "Codex mode switch result"
-Write-Host "Mode: $($result.mode)"
+function Write-Rule {
+    param([string]$Text)
+    Write-Host ""
+    Write-Host "============================================================"
+    Write-Host ("  " + $Text)
+    Write-Host "============================================================"
+}
+
+function Format-Value {
+    param($Value)
+    if ($null -eq $Value -or $Value -eq "") { return "<none>" }
+    return [string]$Value
+}
+
+function Write-Kv {
+    param(
+        [string]$Name,
+        $Value
+    )
+    Write-Host ("  {0,-30} {1}" -f $Name, (Format-Value $Value))
+}
+
+function Write-ProviderRows {
+    param(
+        [string]$Title,
+        $Rows
+    )
+    Write-Host ""
+    Write-Host ("  " + $Title)
+    Write-Host "  ----------------------------------------------------------"
+    if (-not $Rows -or $Rows.Count -eq 0) {
+        Write-Host "  (no rows)"
+        return
+    }
+    foreach ($row in $Rows) {
+        $provider = Format-Value $row.model_provider
+        if ($null -ne $row.archived -and $null -ne $row.has_user_event) {
+            Write-Host ("  {0,-24} archived={1,-5} user_event={2,-5} count={3,5}" -f $provider, $row.archived, $row.has_user_event, $row.count)
+        }
+        else {
+            Write-Host ("  {0,-24} count={1,5}" -f $provider, $row.count)
+        }
+    }
+}
+
+Write-Rule "Codex Mode Switch Result"
+Write-Kv "Mode" $result.mode
+Write-Kv "Top-level provider" $result.top_level_model_provider
+Write-Kv "Target provider" $result.target_provider
 if ($result.backup_dir) {
-    Write-Host "Backup: $($result.backup_dir)"
+    Write-Kv "Backup" $result.backup_dir
 }
-$top = $result.top_level_model_provider
-if (-not $top) { $top = "<none>" }
-Write-Host "Top-level model_provider: $top"
-Write-Host "Cockpit provider block present: $($result.cockpit_provider_block_present)"
-if ($result.cockpit_base_url) {
-    Write-Host "Cockpit base_url: $($result.cockpit_base_url)"
-}
-Write-Host "CCSwitch provider block present: $($result.cc_switch_provider_block_present)"
-if ($result.cc_switch_base_url) {
-    Write-Host "CCSwitch base_url: $($result.cc_switch_base_url)"
-}
+
+Write-Rule "Provider Configuration"
+Write-Kv "Cockpit block present" $result.cockpit_provider_block_present
+Write-Kv "Cockpit base_url" $result.cockpit_base_url
+Write-Kv "CCSwitch block present" $result.cc_switch_provider_block_present
+Write-Kv "CCSwitch base_url" $result.cc_switch_base_url
+
+Write-Rule "Migration Summary"
 if ($null -ne $result.provider_updates) {
-    Write-Host "Thread provider rows changed: $($result.provider_updates)"
-}
-if ($null -ne $result.visible_marked) {
-    Write-Host "User-visible rows marked: $($result.visible_marked)"
-}
-if ($null -ne $result.visible_rows) {
-    Write-Host "Visible user rows indexed: $($result.visible_rows)"
-}
-if ($null -ne $result.projectless_count) {
-    Write-Host "Projectless thread ids: $($result.projectless_count)"
+    Write-Kv "SQLite rows migrated" $result.provider_updates
+    Write-ProviderRows "SQLite migration detail" $result.provider_updates_by_source
 }
 if ($null -ne $result.rollout_files_changed) {
-    Write-Host "JSONL session_meta files changed: $($result.rollout_files_changed) / scanned $($result.rollout_files_scanned)"
+    Write-Kv "JSONL files migrated" ("{0} / {1} scanned" -f $result.rollout_files_changed, $result.rollout_files_scanned)
+    Write-ProviderRows "JSONL migration detail" $result.rollout_rewrites_by_provider
 }
+if ($null -ne $result.visible_marked) {
+    Write-Kv "User-visible rows marked" $result.visible_marked
+}
+if ($null -ne $result.visible_rows) {
+    Write-Kv "Visible user rows indexed" $result.visible_rows
+}
+if ($null -ne $result.projectless_count) {
+    Write-Kv "Projectless thread ids" $result.projectless_count
+}
+
+Write-Rule "Current Index"
 if ($result.provider_counts) {
-    Write-Host "Thread provider counts:"
-    foreach ($row in $result.provider_counts) {
-        Write-Host ("  provider={0}; archived={1}; has_user_event={2}; count={3}" -f $row.model_provider, $row.archived, $row.has_user_event, $row.count)
-    }
+    Write-ProviderRows "SQLite provider counts" $result.provider_counts
 }
 if ($result.rollout_provider_counts) {
-    Write-Host "JSONL session_meta provider counts:"
-    foreach ($row in $result.rollout_provider_counts) {
-        Write-Host ("  provider={0}; count={1}" -f $row.model_provider, $row.count)
-    }
+    Write-ProviderRows "JSONL session_meta provider counts" $result.rollout_provider_counts
+}
+
+Write-Rule "Next Step"
+if ($Mode -eq "Status") {
+    Write-Host "  Status only. No files were migrated."
+}
+else {
+    Write-Host "  Close and reopen Codex Desktop after switching mode."
 }
