@@ -9,34 +9,30 @@ if not exist "%SCRIPT%" (
   exit /b 1
 )
 
-if /I "%~1"=="normal" goto normal
-if /I "%~1"=="cockpit" goto cockpit
-if /I "%~1"=="ccswitch" goto ccswitch
-if /I "%~1"=="cc" goto ccswitch
-if /I "%~1"=="status" goto status
+if "%~1"=="1" goto normal
+if "%~1"=="2" goto cockpit
+if "%~1"=="3" goto ccswitch
+if "%~1"=="4" goto status
 
 :menu
 cls
-echo Codex Mode Switcher
+echo ========================================
+echo          Codex Mode Switcher
+echo ========================================
 echo.
-echo  1. Normal    - OpenAI login provider
-echo  2. Cockpit   - Cockpit local API provider
-echo  3. CCSwitch  - CC Switch custom provider
-echo  4. Status    - Show current provider/session index
-echo  Q. Quit
+echo   1  Normal     OpenAI login provider
+echo   2  Cockpit    Cockpit local API provider
+echo   3  CCSwitch   CC Switch custom provider
+echo   4  Status     Show current state only
+echo   0  Quit
 echo.
-set /p "choice=Choose mode: "
+set /p "choice=Input number: "
 
-if /I "%choice%"=="1" goto normal
-if /I "%choice%"=="normal" goto normal
-if /I "%choice%"=="2" goto cockpit
-if /I "%choice%"=="cockpit" goto cockpit
-if /I "%choice%"=="3" goto ccswitch
-if /I "%choice%"=="ccswitch" goto ccswitch
-if /I "%choice%"=="cc" goto ccswitch
-if /I "%choice%"=="4" goto status
-if /I "%choice%"=="status" goto status
-if /I "%choice%"=="q" exit /b 0
+if "%choice%"=="1" goto normal
+if "%choice%"=="2" goto cockpit
+if "%choice%"=="3" goto ccswitch
+if "%choice%"=="4" goto status
+if "%choice%"=="0" exit /b 0
 goto menu
 
 :normal
