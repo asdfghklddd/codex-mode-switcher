@@ -1,0 +1,8 @@
+.codex/
+backup-*/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+auth.json
+*.bak
+*.tmp
