@@ -9,8 +9,11 @@ Windows desktop switcher for keeping Codex Desktop sessions visible across three
 ## Files
 
 - `Switch-CodexMode.bat`: single interactive menu for all modes.
+- `Switch-CodexMode.sh`: macOS/Linux command-line wrapper.
+- `Switch-CodexMode.command`: macOS Finder double-click wrapper.
 - `Switch-CodexMode.ps1`: main switch logic.
 - `legacy-Switch-CodexMode-*.bat`: old one-click wrappers kept for compatibility.
+- `tests/Invoke-SwitcherSelfTest.ps1`: temp-fixture self-test for config, SQLite, JSONL, and POSIX path handling.
 
 ## Usage
 
@@ -23,6 +26,43 @@ Command-line shortcuts are also supported:
 .\Switch-CodexMode.bat cockpit
 .\Switch-CodexMode.bat ccswitch
 .\Switch-CodexMode.bat status
+```
+
+## macOS Usage
+
+Install PowerShell 7 and ensure `python3` is available:
+
+```bash
+brew install --cask powershell
+```
+
+Then run:
+
+```bash
+bash ./Switch-CodexMode.sh status
+bash ./Switch-CodexMode.sh normal
+bash ./Switch-CodexMode.sh cockpit
+bash ./Switch-CodexMode.sh ccswitch
+```
+
+You can also double-click `Switch-CodexMode.command` from Finder after making it executable:
+
+```bash
+chmod +x Switch-CodexMode.command Switch-CodexMode.sh
+```
+
+## Self-Test
+
+Run this before changing the switcher:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Invoke-SwitcherSelfTest.ps1
+```
+
+On macOS:
+
+```bash
+pwsh -NoProfile -ExecutionPolicy Bypass -File ./tests/Invoke-SwitcherSelfTest.ps1
 ```
 
 ## Safety
