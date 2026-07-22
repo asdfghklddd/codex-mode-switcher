@@ -2,6 +2,7 @@
 setlocal EnableExtensions
 
 set "SCRIPT=%~dp0Switch-CodexMode.ps1"
+set "PANEL=%~dp0Start-CodexModeSwitcher.ps1"
 
 if not exist "%SCRIPT%" (
   echo Switch-CodexMode.ps1 not found next to this BAT.
@@ -9,31 +10,22 @@ if not exist "%SCRIPT%" (
   exit /b 1
 )
 
+if not exist "%PANEL%" (
+  echo Start-CodexModeSwitcher.ps1 not found next to this BAT.
+  pause
+  exit /b 1
+)
+
+if "%~1"=="" goto panel
+if /I "%~1"=="ui" goto panel
 if "%~1"=="1" goto normal
 if "%~1"=="2" goto cockpit
 if "%~1"=="3" goto ccswitch
 if "%~1"=="4" goto status
 
-:menu
-cls
-echo ========================================
-echo          Codex Mode Switcher
-echo ========================================
-echo.
-echo   1  Normal     Plus/OpenAI login mode
-echo   2  Cockpit    Cockpit mode
-echo   3  CCSwitch   CC Switch mode
-echo   4  Status     Show detailed current status
-echo   0  Quit
-echo.
-set /p "choice=Input number: "
-
-if "%choice%"=="1" goto normal
-if "%choice%"=="2" goto cockpit
-if "%choice%"=="3" goto ccswitch
-if "%choice%"=="4" goto status
-if "%choice%"=="0" exit /b 0
-goto menu
+:panel
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PANEL%"
+exit /b %ERRORLEVEL%
 
 :normal
 set "MODE=Normal"

@@ -3,13 +3,16 @@ set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 script="$script_dir/Switch-CodexMode.ps1"
+panel="$script_dir/Start-CodexModeSwitcher.ps1"
 host_os="$(uname -s)"
 host_arch="$(uname -m)"
 
-if [[ ! -f "$script" ]]; then
-  echo "Switch-CodexMode.ps1 not found next to this script."
-  exit 1
-fi
+for required_file in "$script" "$panel"; do
+  if [[ ! -f "$required_file" ]]; then
+    echo "Required launcher file not found: $required_file"
+    exit 1
+  fi
+done
 
 if ! command -v pwsh >/dev/null 2>&1; then
   if [[ "$host_os" == "Darwin" ]]; then
@@ -31,33 +34,21 @@ if [[ "$host_os" == "Darwin" && "$host_arch" == "arm64" ]] && command -v file >/
   fi
 fi
 
-mode="${1:-}"
+mode="${1:-ui}"
 mode_key="$(printf '%s' "$mode" | tr '[:upper:]' '[:lower:]')"
 case "$mode_key" in
   normal) mode="Normal" ;;
   cockpit) mode="Cockpit" ;;
   ccswitch|cc) mode="CCSwitch" ;;
   status) mode="Status" ;;
-  "")
-    echo "Codex Mode Switcher"
-    echo
-    echo "  1. Normal    - OpenAI login provider"
-    echo "  2. Cockpit   - Cockpit local API provider"
-    echo "  3. CCSwitch  - CC Switch custom provider"
-    echo "  4. Status    - Show current configuration only"
-    echo
-    read -r -p "Choose mode: " choice
-    choice_key="$(printf '%s' "$choice" | tr '[:upper:]' '[:lower:]')"
-    case "$choice_key" in
-      1|normal) mode="Normal" ;;
-      2|cockpit) mode="Cockpit" ;;
-      3|ccswitch|cc) mode="CCSwitch" ;;
-      4|status) mode="Status" ;;
-      *) echo "Invalid choice."; exit 1 ;;
-    esac
-    ;;
-  *) echo "Usage: $0 [normal|cockpit|ccswitch|status]"; exit 1 ;;
+  ui|panel) mode="UI" ;;
+  *) echo "Usage: $0 [ui|normal|cockpit|ccswitch|status]"; exit 1 ;;
 esac
+
+if [[ "$mode" == "UI" ]]; then
+  "$powershell_bin" -NoLogo -NoProfile -File "$panel"
+  exit $?
+fi
 
 "$powershell_bin" -NoLogo -NoProfile -File "$script" -Mode "$mode"
 if [[ "$mode" != "Status" ]]; then
