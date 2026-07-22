@@ -33,16 +33,18 @@ function Get-HashMap {
 
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "codex-mode-switcher-test-$([Guid]::NewGuid().ToString('N'))"
 $codexHome = Join-Path $tempRoot ".codex"
+$sessionsPath = Join-Path $codexHome "sessions"
+$archivedSessionsPath = Join-Path $codexHome "archived_sessions"
 $protectedPaths = @(
-    (Join-Path $codexHome "sessions\sentinel.jsonl"),
-    (Join-Path $codexHome "archived_sessions\sentinel.jsonl"),
+    (Join-Path $sessionsPath "sentinel.jsonl"),
+    (Join-Path $archivedSessionsPath "sentinel.jsonl"),
     (Join-Path $codexHome "state_5.sqlite"),
     (Join-Path $codexHome ".codex-global-state.json")
 )
 
 try {
-    New-Item -ItemType Directory -Path (Join-Path $codexHome "sessions") -Force | Out-Null
-    New-Item -ItemType Directory -Path (Join-Path $codexHome "archived_sessions") -Force | Out-Null
+    New-Item -ItemType Directory -Path $sessionsPath -Force | Out-Null
+    New-Item -ItemType Directory -Path $archivedSessionsPath -Force | Out-Null
 
     Set-Content -LiteralPath (Join-Path $codexHome "config.toml") -Encoding UTF8 -Value @'
 model = "gpt-test"
