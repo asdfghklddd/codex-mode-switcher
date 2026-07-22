@@ -1,78 +1,69 @@
-# Codex Mode Switcher
+# Codex 模式切换器
 
-Small Windows/macOS launcher for selecting the top-level Codex provider in one shared `CODEX_HOME`.
+用于在同一个共享 `CODEX_HOME` 中切换 Codex 顶层 provider 的小型 Windows/macOS 启动器。
 
-Double-clicking its launcher opens a dependency-free local HTML control panel. The
-page uses only HTML, CSS, and browser JavaScript; a PowerShell bridge listens on
-`127.0.0.1` to apply the existing safe switch script. A random per-launch token
-is required for every local API request.
+双击启动器会打开零依赖的本地 HTML 控制面板。页面只使用 HTML、CSS 与浏览器 JavaScript；PowerShell 桥接只监听 `127.0.0.1`，负责调用既有的安全切换脚本。每次启动都会生成随机令牌，所有本地 API 请求都必须携带该令牌。
 
-## What it changes
+## 会修改什么
 
-The switcher changes only the top-level `model_provider` in `config.toml`:
+切换器只会修改 `config.toml` 中顶层的 `model_provider`：
 
-- `Normal`: removes the managed top-level provider and uses the normal OpenAI default.
-- `Cockpit`: selects `codex_local_access`.
-- `CCSwitch`: selects `custom`.
-- `Status`: reads configuration only.
+- `Normal`：移除受管理的顶层 provider，使用正常的 OpenAI 默认配置。
+- `Cockpit`：选择 `codex_local_access`。
+- `CCSwitch`：选择 `custom`。
+- `Status`：仅读取配置。
 
-It never reads, copies, rewrites, indexes, archives, migrates, or deletes:
+它绝不会读取、复制、改写、索引、归档、迁移或删除：
 
-- `sessions/` or `archived_sessions/`
-- SQLite databases or global state
-- authentication files
-- backup directories
+- `sessions/` 或 `archived_sessions/`
+- SQLite 数据库或全局状态
+- 认证文件
+- 备份目录
 
-Historical conversation metadata is private implementation data. Changing a runtime provider must not rewrite it. To share the same local conversations across Codex launchers, make every launcher use the same `CODEX_HOME` (normally `~/.codex`).
+历史会话元数据属于私有实现数据，切换运行时 provider 不应改写它。若要让不同 Codex 启动器共享本地会话，所有启动器必须使用同一个 `CODEX_HOME`（通常为 `~/.codex`）。
 
-## Files
+## 文件说明
 
-- `Switch-CodexMode.bat`: Windows panel launcher (with numbered CLI compatibility).
-- `Switch-CodexMode.ps1`: main implementation.
-- `Start-CodexModeSwitcher.ps1`: loopback-only bridge for the local panel.
-- `CodexModeSwitcher.html`: dependency-free panel UI.
-- `Switch-CodexMode.sh`: macOS/Linux panel and command-line wrapper.
-- `Switch-CodexMode.command`: macOS Finder panel launcher.
-- `tests/Invoke-SwitcherSelfTest.ps1`: isolated no-session-mutation test.
+- `Switch-CodexMode.bat`：Windows 面板启动器（保留数字参数的命令行兼容）。
+- `Switch-CodexMode.ps1`：核心切换逻辑。
+- `Start-CodexModeSwitcher.ps1`：仅限回环地址的本地面板桥接。
+- `CodexModeSwitcher.html`：无依赖的面板界面。
+- `Switch-CodexMode.sh`：macOS/Linux 面板与命令行启动器。
+- `Switch-CodexMode.command`：macOS Finder 面板启动器。
+- `tests/Invoke-SwitcherSelfTest.ps1`：隔离环境下的会话不变性测试。
 
-## Usage
+## 使用方法
 
-Close every Codex app, then open the launcher with no arguments. It opens the
-local control panel in your default browser. Choose a provider and reopen every
-Codex app so it reloads `config.toml`.
+先关闭所有 Codex 应用，再直接启动不带参数的启动器；它会在默认浏览器中打开本地控制面板。选择 provider 后，重新打开所有 Codex 应用，让它们重新加载 `config.toml`。
 
 ```powershell
-.\Switch-CodexMode.bat       # Open the local HTML panel
-.\Switch-CodexMode.bat 1  # Normal
-.\Switch-CodexMode.bat 2  # Cockpit
-.\Switch-CodexMode.bat 3  # CCSwitch
-.\Switch-CodexMode.bat 4  # Status
+.\Switch-CodexMode.bat       # 打开本地 HTML 面板
+.\Switch-CodexMode.bat 1     # OpenAI 默认
+.\Switch-CodexMode.bat 2     # Cockpit
+.\Switch-CodexMode.bat 3     # CCSwitch
+.\Switch-CodexMode.bat 4     # 仅查看状态
 ```
 
-### macOS Apple Silicon (M1/M2/M3/M4)
+### macOS Apple Silicon（M1/M2/M3/M4）
 
-The core script is architecture-neutral PowerShell/.NET code. On Apple Silicon,
-install the native arm64 PowerShell 7 build; the launcher detects a likely
-Rosetta build and warns rather than silently relying on it.
+核心脚本使用与架构无关的 PowerShell/.NET 代码。Apple Silicon 请安装原生 arm64 PowerShell 7；启动器检测到疑似 Rosetta 版本时会给出提示，而不会静默依赖它。
 
 ```bash
 brew install --cask powershell
 pwsh -NoProfile -Command '[System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture'
-# Expected: Arm64
+# 预期输出：Arm64
 
 chmod +x ./Switch-CodexMode.command
 ./Switch-CodexMode.command
 ```
 
-You can also double-click `Switch-CodexMode.command` in Finder. If macOS marks a
-downloaded copy as quarantined, remove that attribute only after checking the
-repository source:
+也可以在 Finder 中双击 `Switch-CodexMode.command`。如果 macOS 将下载的副本标记为隔离文件，请确认仓库来源后再移除该文件的隔离属性：
 
 ```bash
 xattr -d com.apple.quarantine ./Switch-CodexMode.command
 ```
 
-On macOS/Linux, no argument opens the HTML panel; explicit command-line use is:
+macOS/Linux 不带参数时会打开 HTML 面板；需要命令行时可使用：
 
 ```bash
 bash ./Switch-CodexMode.sh ui
@@ -82,23 +73,21 @@ bash ./Switch-CodexMode.sh cockpit
 bash ./Switch-CodexMode.sh ccswitch
 ```
 
-The default shared location on macOS is `~/.codex`. Do not configure individual
-Codex launchers with different `CODEX_HOME` values: that would create separate
-local state and histories. Check the shell value before launching with
-`echo "$CODEX_HOME"`; an empty value means the shared default is used.
+macOS 的共享默认目录为 `~/.codex`。不要为各个 Codex 启动器设置不同的 `CODEX_HOME`，否则会产生彼此独立的本地状态和历史。启动前可用 `echo "$CODEX_HOME"` 检查 shell 值；空值表示使用共享默认目录。
 
-## Self-test
+## 自测
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Invoke-SwitcherSelfTest.ps1
 ```
 
-The test confirms all modes work and verifies that fixture session JSONL, archived JSONL, SQLite, global state, and backup directories are unchanged.
-Its fixture paths are platform-neutral, so run the same test on macOS with
-`pwsh -NoProfile -File ./tests/Invoke-SwitcherSelfTest.ps1` after copying the
-repository there.
+此测试会验证所有模式，并确认测试用的会话 JSONL、归档 JSONL、SQLite、全局状态与备份目录均未改变。测试路径不依赖具体平台；复制仓库到 macOS 后，可运行：
 
-Run the isolated browser-panel integration test with:
+```bash
+pwsh -NoProfile -File ./tests/Invoke-SwitcherSelfTest.ps1
+```
+
+浏览器面板的隔离集成测试：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Invoke-WebPanelSelfTest.ps1

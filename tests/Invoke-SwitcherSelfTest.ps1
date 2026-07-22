@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 $switcher = Join-Path $repoRoot "Switch-CodexMode.ps1"
@@ -7,7 +7,7 @@ if (-not $powershell) {
     $powershell = Get-Command powershell -ErrorAction SilentlyContinue
 }
 if (-not $powershell) {
-    throw "pwsh/powershell was not found on PATH."
+    throw "PATH 中找不到 pwsh/powershell。"
 }
 
 function Assert-True {
@@ -60,31 +60,31 @@ wire_api = "responses"
 '@
     Set-Content -LiteralPath $protectedPaths[0] -Encoding UTF8 -Value '{"type":"session_meta","payload":{"model_provider":"custom"}}'
     Set-Content -LiteralPath $protectedPaths[1] -Encoding UTF8 -Value '{"type":"session_meta","payload":{"model_provider":"custom"}}'
-    Set-Content -LiteralPath $protectedPaths[2] -Encoding UTF8 -Value 'sentinel state bytes must not change'
-    Set-Content -LiteralPath $protectedPaths[3] -Encoding UTF8 -Value '{"sentinel":"must not change"}'
+    Set-Content -LiteralPath $protectedPaths[2] -Encoding UTF8 -Value '会话保护测试：这些状态字节不得改变'
+    Set-Content -LiteralPath $protectedPaths[3] -Encoding UTF8 -Value '{"sentinel":"不得改变"}'
 
     $before = Get-HashMap -Paths $protectedPaths
 
     foreach ($mode in @("Status", "Normal", "Cockpit", "CCSwitch")) {
         & $powershell.Source -NoProfile -ExecutionPolicy Bypass -File $switcher -Mode $mode -CodexHome $codexHome | Out-Null
         if ($LASTEXITCODE -ne 0) {
-            throw "Switcher failed in $mode mode."
+            throw "切换器在 $mode 模式下执行失败。"
         }
     }
 
     $config = Get-Content -Raw -LiteralPath (Join-Path $codexHome "config.toml")
-    Assert-True ($config -match '(?m)^model_provider\s*=\s*"custom"\s*$') "Expected CCSwitch to be the final top-level provider."
+    Assert-True ($config -match '(?m)^model_provider\s*=\s*"custom"\s*$') "预期 CCSwitch 成为最终的顶层 provider。"
 
     $after = Get-HashMap -Paths $protectedPaths
     foreach ($path in $protectedPaths) {
-        Assert-True ($before[$path] -eq $after[$path]) "Switcher changed protected session storage: $path"
+        Assert-True ($before[$path] -eq $after[$path]) "切换器修改了受保护的会话存储：$path"
     }
 
     $backupCount = @(Get-ChildItem -LiteralPath $codexHome -Directory -Force |
         Where-Object Name -Like "backup-*-codex-mode-switch").Count
-    Assert-True ($backupCount -eq 0) "Switcher unexpectedly created a backup directory."
+    Assert-True ($backupCount -eq 0) "切换器意外创建了备份目录。"
 
-    Write-Host "Self-test passed."
+    Write-Host "核心自测通过。"
 }
 finally {
     if (Test-Path -LiteralPath $tempRoot) {

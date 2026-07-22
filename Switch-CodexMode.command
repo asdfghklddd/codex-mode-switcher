@@ -7,7 +7,7 @@ status=$?
 
 if [[ -t 0 && $# -eq 0 ]]; then
   echo
-  read -r -p "Press Return to close..."
+  read -r -p "按回车键关闭…"
 fi
 
 exit "$status"
