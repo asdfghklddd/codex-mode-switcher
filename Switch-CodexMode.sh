@@ -31,7 +31,7 @@ case "$mode_key" in
     echo "  1. Normal    - OpenAI login provider"
     echo "  2. Cockpit   - Cockpit local API provider"
     echo "  3. CCSwitch  - CC Switch custom provider"
-    echo "  4. Status    - Show current provider/session index"
+    echo "  4. Status    - Show current configuration only"
     echo
     read -r -p "Choose mode: " choice
     choice_key="$(printf '%s' "$choice" | tr '[:upper:]' '[:lower:]')"
@@ -49,5 +49,5 @@ esac
 "$powershell_bin" -NoProfile -ExecutionPolicy Bypass -File "$script" -Mode "$mode"
 if [[ "$mode" != "Status" ]]; then
   echo
-  echo "Close and reopen Codex Desktop after switching mode."
+  echo "Close and reopen every Codex app after switching mode."
 fi

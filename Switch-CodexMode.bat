@@ -20,10 +20,10 @@ echo ========================================
 echo          Codex Mode Switcher
 echo ========================================
 echo.
-echo   1  Normal     OpenAI login provider
-echo   2  Cockpit    Cockpit local API provider
-echo   3  CCSwitch   CC Switch custom provider
-echo   4  Status     Show current state only
+echo   1  Normal     Plus/OpenAI login mode
+echo   2  Cockpit    Cockpit mode
+echo   3  CCSwitch   CC Switch mode
+echo   4  Status     Show detailed current status
 echo   0  Quit
 echo.
 set /p "choice=Input number: "
@@ -53,7 +53,17 @@ goto run
 
 :run
 powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Mode %MODE%
+set "RUN_ERROR=%ERRORLEVEL%"
 echo.
-if /I not "%MODE%"=="Status" echo Close and reopen Codex Desktop after switching mode.
+if not "%RUN_ERROR%"=="0" goto finish
+if /I "%MODE%"=="Status" goto finish
+echo ========================================
+echo          Current Status Review
+echo ========================================
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Mode Status
+echo.
+echo Switch complete. Close and reopen every Codex app so it reloads config.toml.
+
+:finish
 pause
-exit /b %ERRORLEVEL%
+exit /b %RUN_ERROR%
