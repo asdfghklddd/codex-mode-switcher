@@ -1,3 +1,14 @@
+<#
+.SYNOPSIS
+    Switches the top-level Codex provider without touching conversation data.
+
+.DESCRIPTION
+    This tool changes only the top-level model_provider entry in config.toml.
+    It never reads, copies, rewrites, indexes, archives, migrates, or deletes
+    sessions, archived sessions, SQLite databases, global state, auth, or backups.
+    Every Codex app must use the same CODEX_HOME to share local conversations.
+#>
+
 param(
     [ValidateSet("Normal", "Cockpit", "CCSwitch", "Status")]
     [string]$Mode = "Status",
@@ -10,12 +21,10 @@ param(
 
     [string]$OpenAIProvider = "openai",
 
-    [string]$CockpitBaseUrl = "http://localhost:55939/v1",
-
-    [string]$CCSwitchBaseUrl = "https://anyrouter.top/v1",
-
+    # Kept so existing shortcuts and command lines remain compatible.
     [string]$ProjectlessRoot = (Join-Path (Join-Path $HOME "Documents") "Codex"),
 
+    # Kept as a no-op for backward compatibility. Session rewriting is removed.
     [switch]$SkipThreadRewrite
 )
 
@@ -23,711 +32,199 @@ $ErrorActionPreference = "Stop"
 
 function Resolve-ExistingDirectory {
     param([string]$Path)
+
     if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
         throw "CodexHome not found: $Path"
     }
+
     return (Resolve-Path -LiteralPath $Path).Path
 }
 
-function New-ModeBackup {
+function Get-ConfigNewline {
+    param([string]$Config)
+
+    if ($Config.Contains("`r`n")) {
+        return "`r`n"
+    }
+
+    return "`n"
+}
+
+function Get-ConfigLines {
+    param([string]$Config)
+
+    $lines = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in ($Config -split "`r?`n")) {
+        $lines.Add($line)
+    }
+
+    return ,$lines
+}
+
+function Join-ConfigLines {
+    param(
+        [System.Collections.Generic.List[string]]$Lines,
+        [string]$Newline
+    )
+
+    return (($Lines -join $Newline).TrimEnd("`r", "`n") + $Newline)
+}
+
+function Get-TopLevelEndIndex {
+    param([System.Collections.Generic.List[string]]$Lines)
+
+    for ($index = 0; $index -lt $Lines.Count; $index++) {
+        if ($Lines[$index] -match '^\s*\[') {
+            return $index
+        }
+    }
+
+    return $Lines.Count
+}
+
+function Get-TopLevelConfigValue {
+    param(
+        [string]$Config,
+        [string]$Name
+    )
+
+    $lines = Get-ConfigLines -Config $Config
+    $endIndex = Get-TopLevelEndIndex -Lines $lines
+    for ($index = 0; $index -lt $endIndex; $index++) {
+        $pattern = '^\s*' + [regex]::Escape($Name) + '\s*=\s*"([^"]+)"\s*$'
+        $match = [regex]::Match($lines[$index], $pattern)
+        if ($match.Success) {
+            return $match.Groups[1].Value
+        }
+    }
+
+    return $null
+}
+
+function Remove-TopLevelProvider {
+    param(
+        [string]$Config,
+        [string[]]$ProviderNames
+    )
+
+    $newline = Get-ConfigNewline -Config $Config
+    $lines = Get-ConfigLines -Config $Config
+    $endIndex = Get-TopLevelEndIndex -Lines $lines
+
+    for ($index = $endIndex - 1; $index -ge 0; $index--) {
+        $match = [regex]::Match($lines[$index], '^\s*model_provider\s*=\s*"([^"]+)"\s*$')
+        if ($match.Success -and $ProviderNames -contains $match.Groups[1].Value) {
+            $lines.RemoveAt($index)
+        }
+    }
+
+    return Join-ConfigLines -Lines $lines -Newline $newline
+}
+
+function Set-TopLevelProvider {
+    param(
+        [string]$Config,
+        [string]$Provider
+    )
+
+    $newline = Get-ConfigNewline -Config $Config
+    $lines = Get-ConfigLines -Config $Config
+    $endIndex = Get-TopLevelEndIndex -Lines $lines
+
+    for ($index = $endIndex - 1; $index -ge 0; $index--) {
+        if ($lines[$index] -match '^\s*model_provider\s*=') {
+            $lines.RemoveAt($index)
+        }
+    }
+
+    $endIndex = Get-TopLevelEndIndex -Lines $lines
+    $insertAt = 0
+    for ($index = 0; $index -lt $endIndex; $index++) {
+        if ($lines[$index] -match '^\s*model\s*=') {
+            $insertAt = $index + 1
+            break
+        }
+    }
+
+    $lines.Insert($insertAt, ('model_provider = "{0}"' -f $Provider))
+    return Join-ConfigLines -Lines $lines -Newline $newline
+}
+
+function Get-ProviderBlock {
+    param(
+        [string]$Config,
+        [string]$Provider
+    )
+
+    $header = [regex]::Escape("[model_providers.$Provider]")
+    $match = [regex]::Match($Config, ("(?ms)^" + $header + "\s*\r?\n.*?(?=^\[|\z)"))
+    if ($match.Success) {
+        return $match.Value
+    }
+
+    return $null
+}
+
+function Get-ProviderField {
+    param(
+        [string]$Block,
+        [string]$Name
+    )
+
+    if (-not $Block) {
+        return $null
+    }
+
+    $pattern = '(?m)^\s*' + [regex]::Escape($Name) + '\s*=\s*"?([^"\r\n]+)"?\s*$'
+    $match = [regex]::Match($Block, $pattern)
+    if ($match.Success) {
+        return $match.Groups[1].Value.Trim()
+    }
+
+    return $null
+}
+
+function Assert-ProviderBlock {
+    param(
+        [string]$Config,
+        [string]$Provider,
+        [string]$ModeName
+    )
+
+    if (-not (Get-ProviderBlock -Config $Config -Provider $Provider)) {
+        throw "Provider block [model_providers.$Provider] is missing for $ModeName. Configure it with the native provider tool first."
+    }
+}
+
+function Get-ProviderSummary {
+    param(
+        [string]$Config,
+        [string]$Provider
+    )
+
+    $block = Get-ProviderBlock -Config $Config -Provider $Provider
+    return [pscustomobject]@{
+        Provider = $Provider
+        Present = [bool]$block
+        Name = Get-ProviderField -Block $block -Name "name"
+        WireApi = Get-ProviderField -Block $block -Name "wire_api"
+    }
+}
+
+function Get-LegacyBackupCount {
     param([string]$CodexHomePath)
 
-    $stamp = Get-Date -Format "yyyyMMdd-HHmmss-fff"
-    $backupDir = Join-Path $CodexHomePath "backup-$stamp-codex-mode-switch"
-    New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
-
-    $names = @(
-        "config.toml",
-        ".codex-global-state.json",
-        "state_5.sqlite",
-        "state_5.sqlite-wal",
-        "state_5.sqlite-shm"
-    )
-
-    foreach ($name in $names) {
-        $source = Join-Path $CodexHomePath $name
-        if (Test-Path -LiteralPath $source) {
-            Copy-Item -LiteralPath $source -Destination (Join-Path $backupDir $name) -Force
-        }
-    }
-
-    return $backupDir
+    return @(Get-ChildItem -LiteralPath $CodexHomePath -Directory -Force |
+        Where-Object { $_.Name -like "backup-*-codex-mode-switch" }).Count
 }
-
-function Invoke-SwitchPython {
-    param(
-        [string]$PythonCode,
-        [string[]]$Arguments
-    )
-
-    $python = Get-Command python -ErrorAction SilentlyContinue
-    if (-not $python) {
-        $python = Get-Command python3 -ErrorAction SilentlyContinue
-    }
-    if (-not $python) {
-        throw "python/python3 was not found on PATH. This switcher needs Python's built-in sqlite3 module."
-    }
-
-    $tempRoot = [System.IO.Path]::GetTempPath()
-    $temp = Join-Path $tempRoot "switch_codex_mode_$([Guid]::NewGuid().ToString('N')).py"
-    Set-Content -LiteralPath $temp -Value $PythonCode -Encoding UTF8
-    try {
-        $output = & $python.Source $temp @Arguments
-        if ($LASTEXITCODE -ne 0) {
-            throw "Python switch helper failed with exit code $LASTEXITCODE. Output: $output"
-        }
-        return ($output -join [Environment]::NewLine)
-    }
-    finally {
-        if (Test-Path -LiteralPath $temp) {
-            Remove-Item -LiteralPath $temp -Force
-        }
-    }
-}
-
-$ResolvedCodexHome = Resolve-ExistingDirectory -Path $CodexHome
-$BackupDir = $null
-if ($Mode -ne "Status") {
-    $BackupDir = New-ModeBackup -CodexHomePath $ResolvedCodexHome
-}
-
-$PythonCode = @'
-import argparse
-import json
-import pathlib
-import re
-import shutil
-import sqlite3
-import sys
-
-
-def read_text(path):
-    return path.read_text(encoding="utf-8-sig")
-
-
-def write_text(path, text):
-    path.write_text(text, encoding="utf-8", newline="\n")
-
-
-def strip_long_prefix(path):
-    if not path:
-        return ""
-    path = str(path)
-    if path.startswith("\\\\?\\"):
-        path = path[4:]
-    return path
-
-
-def is_windows_path(path):
-    path = strip_long_prefix(path)
-    return bool(re.match(r"^[A-Za-z]:[\\/]", path)) or path.startswith("\\\\")
-
-
-def display_path(path):
-    path = strip_long_prefix(path)
-    if is_windows_path(path) or "\\" in path:
-        return str(pathlib.PureWindowsPath(path))
-    return str(pathlib.PurePosixPath(path))
-
-
-def path_compare_key(path):
-    path = display_path(path).replace("\\", "/").rstrip("/")
-    if is_windows_path(path):
-        path = path.casefold()
-    return path
-
-
-def norm_key(path):
-    return path_compare_key(path)
-
-
-def under(child, parent):
-    child_key = norm_key(child)
-    parent_key = norm_key(parent)
-    return child_key == parent_key or child_key.startswith(parent_key + "/")
-
-
-def get_top_provider(config):
-    match = re.search(r'(?m)^model_provider\s*=\s*"([^"]+)"\s*$', config)
-    return match.group(1) if match else None
-
-
-def remove_top_provider(config, blocked_values):
-    lines = config.splitlines()
-    kept = []
-    for line in lines:
-        match = re.match(r'\s*model_provider\s*=\s*"([^"]+)"\s*$', line)
-        if match and match.group(1) in blocked_values:
-            continue
-        kept.append(line)
-    return "\n".join(kept).rstrip() + "\n"
-
-
-def set_top_provider(config, provider):
-    config = re.sub(r'(?m)^model_provider\s*=\s*"[^"]*"\s*\n?', "", config)
-    lines = config.splitlines()
-    insert_at = 0
-    for index, line in enumerate(lines):
-        if re.match(r'\s*model\s*=', line):
-            insert_at = index + 1
-            break
-    lines.insert(insert_at, f'model_provider = "{provider}"')
-    return "\n".join(lines).rstrip() + "\n"
-
-
-def provider_header(provider):
-    return f"[model_providers.{provider}]"
-
-
-def extract_provider_block(text, provider):
-    header = re.escape(provider_header(provider))
-    pattern = rf'(?ms)^{header}\s*\n.*?(?=^\[|\Z)'
-    match = re.search(pattern, text)
-    return match.group(0).strip() if match else None
-
-
-def find_provider_block(codex_home, config, provider):
-    block = extract_provider_block(config, provider)
-    if block:
-        return block
-
-    candidates = sorted(
-        codex_home.glob("config.toml*"),
-        key=lambda p: p.stat().st_mtime if p.exists() else 0,
-        reverse=True,
-    )
-    for path in candidates:
-        try:
-            text = read_text(path)
-        except UnicodeDecodeError:
-            continue
-        block = extract_provider_block(text, provider)
-        if block:
-            return block
-    return None
-
-
-def build_provider_block(provider, base_url, provider_name):
-    return "\n".join([
-        provider_header(provider),
-        f'name = "{provider_name}"',
-        f'base_url = "{base_url}"',
-        'wire_api = "responses"',
-        'requires_openai_auth = true',
-        'supports_websockets = false',
-    ])
-
-
-def ensure_provider_block(config, provider, base_url, provider_name):
-    block = build_provider_block(provider, base_url, provider_name)
-    header = re.escape(provider_header(provider))
-    pattern = rf'(?ms)^{header}\s*\n.*?(?=^\[|\Z)'
-    if re.search(pattern, config):
-        return re.sub(pattern, block.strip() + "\n", config).rstrip() + "\n"
-    if "[model_providers]" not in config:
-        config = config.rstrip() + "\n\n[model_providers]\n"
-    return config.rstrip() + "\n\n" + block.strip() + "\n"
-
-
-def provider_status(config, provider, cc_switch_provider=None):
-    block = extract_provider_block(config, provider)
-    base_url = None
-    if block:
-        match = re.search(r'(?m)^base_url\s*=\s*"([^"]+)"\s*$', block)
-        base_url = match.group(1) if match else None
-    result = {
-        "top_level_model_provider": get_top_provider(config),
-        "cockpit_provider_block_present": bool(block),
-        "cockpit_base_url": base_url,
-    }
-    if cc_switch_provider:
-        cc_block = extract_provider_block(config, cc_switch_provider)
-        cc_base_url = None
-        if cc_block:
-            match = re.search(r'(?m)^base_url\s*=\s*"([^"]+)"\s*$', cc_block)
-            cc_base_url = match.group(1) if match else None
-        result.update({
-            "cc_switch_provider_block_present": bool(cc_block),
-            "cc_switch_base_url": cc_base_url,
-        })
-    return result
-
-
-def table_columns(cur, table):
-    return {row[1] for row in cur.execute(f"pragma table_info({table})")}
-
-
-def sqlite_counts(cur):
-    rows = []
-    for row in cur.execute("""
-        select model_provider, archived, has_user_event, count(*) as n
-        from threads
-        group by model_provider, archived, has_user_event
-        order by n desc, model_provider
-    """):
-        rows.append({
-            "model_provider": row[0],
-            "archived": row[1],
-            "has_user_event": row[2],
-            "count": row[3],
-        })
-    return rows
-
-
-def sqlite_provider_counts(cur):
-    return {
-        (row[0] or "<missing>"): row[1]
-        for row in cur.execute("""
-            select model_provider, count(*) as n
-            from threads
-            group by model_provider
-        """)
-    }
-
-
-def rollout_roots(codex_home):
-    roots = [codex_home / "sessions", codex_home / "archived_sessions"]
-    return [root for root in roots if root.exists()]
-
-
-def iter_rollout_paths(codex_home):
-    for root in rollout_roots(codex_home):
-        yield from root.rglob("*.jsonl")
-
-
-def relative_rollout_path(codex_home, path):
-    try:
-        return path.relative_to(codex_home)
-    except ValueError:
-        return pathlib.Path(path.name)
-
-
-def backup_rollout(codex_home, backup_dir, path):
-    if not backup_dir:
-        return
-    backup_root = pathlib.Path(backup_dir) / "rollouts"
-    destination = backup_root / relative_rollout_path(codex_home, path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    if not destination.exists():
-        shutil.copy2(path, destination)
-
-
-def rewrite_rollout_session_meta_providers(codex_home, from_providers, to_provider, backup_dir):
-    scanned = 0
-    changed = 0
-    errors = []
-    from_providers = set(from_providers)
-    changed_by_provider = {provider: 0 for provider in from_providers}
-
-    for path in iter_rollout_paths(codex_home):
-        scanned += 1
-        try:
-            lines = path.read_text(encoding="utf-8-sig").splitlines()
-        except UnicodeDecodeError as exc:
-            errors.append(f"{path}: decode failed: {exc}")
-            continue
-
-        file_changed = False
-        new_lines = []
-        for line in lines:
-            if '"session_meta"' not in line and "'session_meta'" not in line:
-                new_lines.append(line)
-                continue
-            try:
-                obj = json.loads(line)
-            except json.JSONDecodeError:
-                new_lines.append(line)
-                continue
-
-            payload = obj.get("payload") if isinstance(obj, dict) else None
-            if obj.get("type") == "session_meta" and isinstance(payload, dict):
-                current_provider = payload.get("model_provider")
-                if current_provider in from_providers:
-                    changed_by_provider[current_provider] = changed_by_provider.get(current_provider, 0) + 1
-                    payload["model_provider"] = to_provider
-                    line = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
-                    file_changed = True
-            new_lines.append(line)
-
-        if file_changed:
-            backup_rollout(codex_home, backup_dir, path)
-            path.write_text("\n".join(new_lines) + "\n", encoding="utf-8", newline="\n")
-            changed += 1
-
-    return {
-        "rollout_files_scanned": scanned,
-        "rollout_files_changed": changed,
-        "rollout_rewrites_by_provider": [
-            {"model_provider": provider, "count": count}
-            for provider, count in sorted(changed_by_provider.items())
-            if count
-        ],
-        "rollout_rewrite_errors": errors[:10],
-    }
-
-
-def rollout_provider_counts(codex_home):
-    counts = {}
-    scanned = 0
-    for path in iter_rollout_paths(codex_home):
-        scanned += 1
-        try:
-            with path.open("r", encoding="utf-8-sig") as f:
-                for line in f:
-                    if '"session_meta"' not in line and "'session_meta'" not in line:
-                        continue
-                    try:
-                        obj = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if obj.get("type") == "session_meta":
-                        provider = obj.get("payload", {}).get("model_provider") or "<missing>"
-                        counts[provider] = counts.get(provider, 0) + 1
-                        break
-        except UnicodeDecodeError:
-            continue
-    return {
-        "rollout_files_scanned": scanned,
-        "rollout_provider_counts": [
-            {"model_provider": provider, "count": count}
-            for provider, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
-        ],
-    }
-
-
-def rebuild_state(codex_home, doc_root, rows):
-    state_path = codex_home / ".codex-global-state.json"
-    if not state_path.exists():
-        return {"state_updated": False}
-
-    data = json.loads(read_text(state_path))
-    saved_roots = [display_path(x) for x in data.get("electron-saved-workspace-roots", [])]
-    project_order = [display_path(x) for x in data.get("project-order", [])]
-    doc_root = display_path(doc_root)
-
-    def choose_root(cwd):
-        cwd = display_path(cwd)
-        if under(cwd, doc_root):
-            return doc_root
-        candidates = [root for root in saved_roots if under(cwd, root)]
-        if candidates:
-            return max(candidates, key=len)
-        return cwd
-
-    hints = dict(data.get("thread-workspace-root-hints", {}))
-    projectless = []
-    seen_projectless = set()
-    missing_roots = []
-    existing_saved_keys = {norm_key(root) for root in saved_roots}
-
-    for row in rows:
-        root = choose_root(row["cwd"])
-        hints[row["id"]] = root
-        if under(root, doc_root):
-            if row["id"] not in seen_projectless:
-                projectless.append(row["id"])
-                seen_projectless.add(row["id"])
-        elif norm_key(root) not in existing_saved_keys:
-            missing_roots.append(root)
-            existing_saved_keys.add(norm_key(root))
-
-    for thread_id in data.get("projectless-thread-ids", []):
-        if thread_id not in seen_projectless:
-            projectless.append(thread_id)
-            seen_projectless.add(thread_id)
-
-    if missing_roots:
-        missing_keys = {norm_key(root) for root in missing_roots}
-        data["electron-saved-workspace-roots"] = [
-            root for root in saved_roots if norm_key(root) not in missing_keys
-        ] + missing_roots
-        data["project-order"] = [
-            root for root in project_order if norm_key(root) not in missing_keys
-        ] + missing_roots
-    else:
-        data["electron-saved-workspace-roots"] = saved_roots
-        data["project-order"] = project_order
-
-    data["thread-workspace-root-hints"] = hints
-    data["projectless-thread-ids"] = projectless
-    write_text(state_path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
-
-    return {
-        "state_updated": True,
-        "hint_count": len(hints),
-        "projectless_count": len(projectless),
-        "missing_roots_added_count": len(missing_roots),
-    }
-
-
-def unique_values(values):
-    result = []
-    seen = set()
-    for value in values:
-        if not value or value in seen:
-            continue
-        result.append(value)
-        seen.add(value)
-    return result
-
-
-def provider_rewrite_plan(mode, cockpit_provider, cc_switch_provider, openai_provider):
-    known_session_providers = unique_values([
-        openai_provider,
-        cockpit_provider,
-        cc_switch_provider,
-        "Codex API Service",
-    ])
-    if mode == "Normal":
-        target = openai_provider
-    elif mode == "Cockpit":
-        target = cockpit_provider
-    elif mode == "CCSwitch":
-        target = cc_switch_provider
-    else:
-        target = None
-    sources = [provider for provider in known_session_providers if provider != target]
-    return target, sources
-
-
-def update_threads(codex_home, mode, cockpit_provider, cc_switch_provider, openai_provider, doc_root, skip, backup_dir):
-    db_path = codex_home / "state_5.sqlite"
-    if skip or not db_path.exists():
-        return {"db_present": db_path.exists(), "db_updated": False}
-
-    con = sqlite3.connect(db_path, timeout=15)
-    con.row_factory = sqlite3.Row
-    cur = con.cursor()
-    tables = {row[0] for row in cur.execute("select name from sqlite_master where type='table'")}
-    if "threads" not in tables:
-        con.close()
-        return {"db_present": True, "db_updated": False, "reason": "threads table missing"}
-
-    columns = table_columns(cur, "threads")
-    provider_updates = 0
-    visible_marked = 0
-    before_provider_totals = sqlite_provider_counts(cur) if {"model_provider"} <= columns else {}
-
-    target_provider, source_providers = provider_rewrite_plan(
-        mode, cockpit_provider, cc_switch_provider, openai_provider
-    )
-    provider_updates_by_source = [
-        {"model_provider": provider, "count": before_provider_totals.get(provider, 0)}
-        for provider in source_providers
-        if before_provider_totals.get(provider, 0)
-    ]
-
-    if {"model_provider"} <= columns and target_provider and source_providers:
-        placeholders = ",".join("?" for _ in source_providers)
-        cur.execute(
-            f"update threads set model_provider = ? where model_provider in ({placeholders})",
-            [target_provider, *source_providers],
-        )
-        provider_updates = cur.rowcount
-
-    if {"archived", "has_user_event", "thread_source", "first_user_message", "title"} <= columns:
-        cur.execute("""
-            update threads
-            set has_user_event = 1
-            where archived = 0
-              and has_user_event = 0
-              and (thread_source is null or thread_source = 'user')
-              and (coalesce(first_user_message, '') <> '' or coalesce(title, '') <> '')
-        """)
-        visible_marked = cur.rowcount
-
-    select_columns = {"id", "cwd", "updated_at", "archived", "has_user_event", "thread_source"}
-    rows = []
-    if select_columns <= columns:
-        rows = [dict(row) for row in cur.execute("""
-            select id, cwd, updated_at
-            from threads
-            where archived = 0
-              and has_user_event = 1
-              and (thread_source is null or thread_source = 'user')
-              and coalesce(cwd, '') <> ''
-            order by updated_at desc
-        """)]
-
-    con.commit()
-    counts = sqlite_counts(cur)
-    con.close()
-
-    state_result = rebuild_state(codex_home, doc_root, rows)
-    rollout_result = {}
-    if target_provider and source_providers:
-        rollout_result = rewrite_rollout_session_meta_providers(
-            codex_home, source_providers, target_provider, backup_dir
-        )
-    rollout_counts = rollout_provider_counts(codex_home)
-
-    return {
-        "db_present": True,
-        "db_updated": True,
-        "target_provider": target_provider,
-        "source_providers": source_providers,
-        "provider_updates": provider_updates,
-        "provider_updates_by_source": provider_updates_by_source,
-        "visible_marked": visible_marked,
-        "visible_rows": len(rows),
-        "provider_counts": counts,
-        **state_result,
-        **rollout_result,
-        **rollout_counts,
-    }
-
-
-def read_status(codex_home, cockpit_provider, cc_switch_provider):
-    config_path = codex_home / "config.toml"
-    config = read_text(config_path) if config_path.exists() else ""
-    result = provider_status(config, cockpit_provider, cc_switch_provider)
-
-    db_path = codex_home / "state_5.sqlite"
-    result["db_present"] = db_path.exists()
-    if db_path.exists():
-        con = sqlite3.connect(db_path, timeout=15)
-        cur = con.cursor()
-        result["provider_counts"] = sqlite_counts(cur)
-        con.close()
-    else:
-        result["provider_counts"] = []
-    result.update(rollout_provider_counts(codex_home))
-    return result
-
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", required=True, choices=["Normal", "Cockpit", "CCSwitch", "Status"])
-    parser.add_argument("--codex-home", required=True)
-    parser.add_argument("--cockpit-provider", required=True)
-    parser.add_argument("--cc-switch-provider", required=True)
-    parser.add_argument("--openai-provider", required=True)
-    parser.add_argument("--cockpit-base-url", required=True)
-    parser.add_argument("--cc-switch-base-url", required=True)
-    parser.add_argument("--projectless-root", required=True)
-    parser.add_argument("--backup-dir", default="")
-    parser.add_argument("--skip-thread-rewrite", action="store_true")
-    args = parser.parse_args()
-
-    codex_home = pathlib.Path(args.codex_home)
-    config_path = codex_home / "config.toml"
-
-    if args.mode == "Status":
-        result = read_status(codex_home, args.cockpit_provider, args.cc_switch_provider)
-        result["mode"] = args.mode
-        print(json.dumps(result, ensure_ascii=False))
-        return 0
-
-    if not config_path.exists():
-        raise SystemExit(f"config.toml not found: {config_path}")
-
-    config = read_text(config_path)
-    if args.mode == "Normal":
-        config = remove_top_provider(config, {
-            args.cockpit_provider,
-            args.cc_switch_provider,
-            "Codex API Service",
-        })
-        config = ensure_provider_block(
-            config,
-            args.cockpit_provider,
-            args.cockpit_base_url,
-            "Codex API Service",
-        )
-        config = ensure_provider_block(
-            config,
-            args.cc_switch_provider,
-            args.cc_switch_base_url,
-            args.cc_switch_provider,
-        )
-    elif args.mode == "Cockpit":
-        config = ensure_provider_block(
-            config,
-            args.cockpit_provider,
-            args.cockpit_base_url,
-            "Codex API Service",
-        )
-        config = ensure_provider_block(
-            config,
-            args.cc_switch_provider,
-            args.cc_switch_base_url,
-            args.cc_switch_provider,
-        )
-        config = set_top_provider(config, args.cockpit_provider)
-    elif args.mode == "CCSwitch":
-        config = ensure_provider_block(
-            config,
-            args.cockpit_provider,
-            args.cockpit_base_url,
-            "Codex API Service",
-        )
-        config = ensure_provider_block(
-            config,
-            args.cc_switch_provider,
-            args.cc_switch_base_url,
-            args.cc_switch_provider,
-        )
-        config = set_top_provider(config, args.cc_switch_provider)
-
-    write_text(config_path, config)
-    thread_result = update_threads(
-        codex_home,
-        args.mode,
-        args.cockpit_provider,
-        args.cc_switch_provider,
-        args.openai_provider,
-        args.projectless_root,
-        args.skip_thread_rewrite,
-        args.backup_dir,
-    )
-
-    result = {
-        "mode": args.mode,
-        "backup_dir": args.backup_dir,
-        **provider_status(config, args.cockpit_provider, args.cc_switch_provider),
-        **thread_result,
-    }
-    print(json.dumps(result, ensure_ascii=False))
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
-'@
-
-$argsForPython = @(
-    "--mode", $Mode,
-    "--codex-home", $ResolvedCodexHome,
-    "--cockpit-provider", $CockpitProvider,
-    "--cc-switch-provider", $CCSwitchProvider,
-    "--openai-provider", $OpenAIProvider,
-    "--cockpit-base-url", $CockpitBaseUrl,
-    "--cc-switch-base-url", $CCSwitchBaseUrl,
-    "--projectless-root", $ProjectlessRoot
-)
-
-if ($BackupDir) {
-    $argsForPython += @("--backup-dir", $BackupDir)
-}
-if ($SkipThreadRewrite) {
-    $argsForPython += "--skip-thread-rewrite"
-}
-
-$jsonText = Invoke-SwitchPython -PythonCode $PythonCode -Arguments $argsForPython
-$result = $jsonText | ConvertFrom-Json
 
 function Write-Rule {
     param([string]$Text)
+
     Write-Host ""
     Write-Host "============================================================"
     Write-Host ("  " + $Text)
     Write-Host "============================================================"
-}
-
-function Format-Value {
-    param($Value)
-    if ($null -eq $Value -or $Value -eq "") { return "<none>" }
-    return [string]$Value
 }
 
 function Write-Kv {
@@ -735,77 +232,82 @@ function Write-Kv {
         [string]$Name,
         $Value
     )
-    Write-Host ("  {0,-30} {1}" -f $Name, (Format-Value $Value))
+
+    $displayValue = if ($null -eq $Value -or $Value -eq "") { "<none>" } else { [string]$Value }
+    Write-Host ("  {0,-34} {1}" -f $Name, $displayValue)
 }
 
-function Write-ProviderRows {
-    param(
-        [string]$Title,
-        $Rows
-    )
-    Write-Host ""
-    Write-Host ("  " + $Title)
-    Write-Host "  ----------------------------------------------------------"
-    if (-not $Rows -or $Rows.Count -eq 0) {
-        Write-Host "  (no rows)"
-        return
+$resolvedCodexHome = Resolve-ExistingDirectory -Path $CodexHome
+$configPath = Join-Path $resolvedCodexHome "config.toml"
+if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
+    throw "config.toml not found: $configPath"
+}
+
+$originalConfig = [System.IO.File]::ReadAllText($configPath)
+$updatedConfig = $originalConfig
+$targetProvider = $null
+
+switch ($Mode) {
+    "Normal" {
+        $updatedConfig = Remove-TopLevelProvider -Config $originalConfig -ProviderNames @(
+            $CockpitProvider,
+            $CCSwitchProvider,
+            $OpenAIProvider,
+            "Codex API Service"
+        )
+        $targetProvider = "OpenAI default"
     }
-    foreach ($row in $Rows) {
-        $provider = Format-Value $row.model_provider
-        if ($null -ne $row.archived -and $null -ne $row.has_user_event) {
-            Write-Host ("  {0,-24} archived={1,-5} user_event={2,-5} count={3,5}" -f $provider, $row.archived, $row.has_user_event, $row.count)
-        }
-        else {
-            Write-Host ("  {0,-24} count={1,5}" -f $provider, $row.count)
-        }
+    "Cockpit" {
+        Assert-ProviderBlock -Config $originalConfig -Provider $CockpitProvider -ModeName $Mode
+        $updatedConfig = Set-TopLevelProvider -Config $originalConfig -Provider $CockpitProvider
+        $targetProvider = $CockpitProvider
+    }
+    "CCSwitch" {
+        Assert-ProviderBlock -Config $originalConfig -Provider $CCSwitchProvider -ModeName $Mode
+        $updatedConfig = Set-TopLevelProvider -Config $originalConfig -Provider $CCSwitchProvider
+        $targetProvider = $CCSwitchProvider
+    }
+    "Status" {
+        $targetProvider = "<read-only>"
     }
 }
+
+$configChanged = $false
+if ($Mode -ne "Status" -and -not [string]::Equals($originalConfig, $updatedConfig, [System.StringComparison]::Ordinal)) {
+    [System.IO.File]::WriteAllText($configPath, $updatedConfig, [System.Text.UTF8Encoding]::new($false))
+    $configChanged = $true
+}
+
+$effectiveConfig = if ($configChanged) { $updatedConfig } else { $originalConfig }
+$cockpitSummary = Get-ProviderSummary -Config $effectiveConfig -Provider $CockpitProvider
+$ccSwitchSummary = Get-ProviderSummary -Config $effectiveConfig -Provider $CCSwitchProvider
 
 Write-Rule "Codex Mode Switch Result"
-Write-Kv "Mode" $result.mode
-Write-Kv "Top-level provider" $result.top_level_model_provider
-Write-Kv "Target provider" $result.target_provider
-if ($result.backup_dir) {
-    Write-Kv "Backup" $result.backup_dir
-}
+Write-Kv "Mode" $Mode
+Write-Kv "Target provider" $targetProvider
+Write-Kv "Top-level provider" (Get-TopLevelConfigValue -Config $effectiveConfig -Name "model_provider")
+Write-Kv "Top-level model" (Get-TopLevelConfigValue -Config $effectiveConfig -Name "model")
+Write-Kv "config.toml changed" $configChanged
 
-Write-Rule "Provider Configuration"
-Write-Kv "Cockpit block present" $result.cockpit_provider_block_present
-Write-Kv "Cockpit base_url" $result.cockpit_base_url
-Write-Kv "CCSwitch block present" $result.cc_switch_provider_block_present
-Write-Kv "CCSwitch base_url" $result.cc_switch_base_url
+Write-Rule "Shared Session Safety"
+Write-Kv "CODEX_HOME" $resolvedCodexHome
+Write-Kv "Legacy switcher backups" (Get-LegacyBackupCount -CodexHomePath $resolvedCodexHome)
+Write-Host "  This tool never reads or changes sessions, archived_sessions, SQLite, global state, auth, or backups."
+Write-Host "  No session migration, session copy, archive, or backup cleanup is performed."
+Write-Host "  To share history, launch every Codex app with this same CODEX_HOME."
 
-Write-Rule "Migration Summary"
-if ($null -ne $result.provider_updates) {
-    Write-Kv "SQLite rows migrated" $result.provider_updates
-    Write-ProviderRows "SQLite migration detail" $result.provider_updates_by_source
-}
-if ($null -ne $result.rollout_files_changed) {
-    Write-Kv "JSONL files migrated" ("{0} / {1} scanned" -f $result.rollout_files_changed, $result.rollout_files_scanned)
-    Write-ProviderRows "JSONL migration detail" $result.rollout_rewrites_by_provider
-}
-if ($null -ne $result.visible_marked) {
-    Write-Kv "User-visible rows marked" $result.visible_marked
-}
-if ($null -ne $result.visible_rows) {
-    Write-Kv "Visible user rows indexed" $result.visible_rows
-}
-if ($null -ne $result.projectless_count) {
-    Write-Kv "Projectless thread ids" $result.projectless_count
-}
-
-Write-Rule "Current Index"
-if ($result.provider_counts) {
-    Write-ProviderRows "SQLite provider counts" $result.provider_counts
-}
-if ($result.rollout_provider_counts) {
-    Write-ProviderRows "JSONL session_meta provider counts" $result.rollout_provider_counts
-}
+Write-Rule "Provider Status"
+Write-Kv ("{0} block exists" -f $cockpitSummary.Provider) $cockpitSummary.Present
+Write-Kv ("{0} name" -f $cockpitSummary.Provider) $cockpitSummary.Name
+Write-Kv ("{0} wire_api" -f $cockpitSummary.Provider) $cockpitSummary.WireApi
+Write-Kv ("{0} block exists" -f $ccSwitchSummary.Provider) $ccSwitchSummary.Present
+Write-Kv ("{0} name" -f $ccSwitchSummary.Provider) $ccSwitchSummary.Name
+Write-Kv ("{0} wire_api" -f $ccSwitchSummary.Provider) $ccSwitchSummary.WireApi
 
 Write-Rule "Next Step"
 if ($Mode -eq "Status") {
-    Write-Host "  Status only. No files were migrated."
+    Write-Host "  Status only. No file was changed."
 }
 else {
-    Write-Host "  Close and reopen Codex Desktop after switching mode."
+    Write-Host "  Close and reopen every Codex app so it reloads config.toml. Session history remains in place."
 }
