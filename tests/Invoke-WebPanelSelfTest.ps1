@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 $panelServer = Join-Path $repoRoot "Start-CodexModeSwitcher.ps1"
@@ -7,7 +7,7 @@ if (-not $powershell) {
     $powershell = Get-Command powershell -ErrorAction SilentlyContinue
 }
 if (-not $powershell) {
-    throw "pwsh/powershell was not found on PATH."
+    throw "PATH 中找不到 pwsh/powershell。"
 }
 
 function Assert-True {
@@ -42,7 +42,7 @@ wire_api = "responses"
 name = "CC Switch Test"
 wire_api = "responses"
 '@
-    Set-Content -LiteralPath $sessionPath -Encoding UTF8 -Value '{"sentinel":"must not change"}'
+    Set-Content -LiteralPath $sessionPath -Encoding UTF8 -Value '{"sentinel":"不得改变"}'
     $sessionHash = (Get-FileHash -LiteralPath $sessionPath -Algorithm SHA256).Hash
 
     $panelJob = Start-Job -ScriptBlock {
@@ -62,7 +62,7 @@ wire_api = "responses"
         }
     }
 
-    Assert-True -Condition ([bool]$panelUrl) -Message "The local HTML panel did not start."
+    Assert-True -Condition ([bool]$panelUrl) -Message "本地 HTML 面板未能启动。"
 
     $panelUri = [Uri]$panelUrl
     $accessToken = $panelUri.Fragment.TrimStart("#")
@@ -70,7 +70,7 @@ wire_api = "responses"
     $headers = @{ "X-Codex-Mode-Token" = $accessToken }
 
     $html = Invoke-WebRequest -Uri "$baseUrl/" -UseBasicParsing
-    Assert-True -Condition ($html.Content -match "Codex Mode Switcher") -Message "The panel HTML was not served."
+    Assert-True -Condition ($html.Content -match "Codex 模式切换器") -Message "未能提供面板 HTML。"
 
     $unauthorizedBlocked = $false
     try {
@@ -79,20 +79,20 @@ wire_api = "responses"
     catch {
         $unauthorizedBlocked = $_.Exception.Response.StatusCode -eq [System.Net.HttpStatusCode]::Forbidden
     }
-    Assert-True -Condition $unauthorizedBlocked -Message "The panel accepted an unauthenticated local API request."
+    Assert-True -Condition $unauthorizedBlocked -Message "面板接受了未认证的本地 API 请求。"
 
     $initialStatus = Invoke-RestMethod -Uri "$baseUrl/api/status" -Headers $headers
-    Assert-True -Condition ($initialStatus.provider -eq "custom") -Message "Unexpected initial provider."
+    Assert-True -Condition ($initialStatus.provider -eq "custom") -Message "初始 provider 不符合预期。"
 
     $switched = Invoke-RestMethod -Method Post -Uri "$baseUrl/api/switch" -Headers $headers -ContentType "application/json" -Body '{"mode":"Cockpit"}'
-    Assert-True -Condition ($switched.status.provider -eq "codex_local_access") -Message "The panel did not switch providers."
-    Assert-True -Condition ($sessionHash -eq (Get-FileHash -LiteralPath $sessionPath -Algorithm SHA256).Hash) -Message "The panel changed session storage."
+    Assert-True -Condition ($switched.status.provider -eq "codex_local_access") -Message "面板未能切换 provider。"
+    Assert-True -Condition ($sessionHash -eq (Get-FileHash -LiteralPath $sessionPath -Algorithm SHA256).Hash) -Message "面板修改了会话存储。"
 
     Invoke-RestMethod -Method Post -Uri "$baseUrl/api/close" -Headers $headers | Out-Null
     Wait-Job -Job $panelJob -Timeout 10 | Out-Null
-    Assert-True -Condition ($panelJob.State -eq "Completed") -Message "The local panel did not stop cleanly."
+    Assert-True -Condition ($panelJob.State -eq "Completed") -Message "本地面板未能正常停止。"
 
-    Write-Host "Web panel self-test passed."
+    Write-Host "网页面板自测通过。"
 }
 finally {
     if ($panelJob) {

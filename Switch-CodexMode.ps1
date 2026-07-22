@@ -1,12 +1,12 @@
-<#
+﻿<#
 .SYNOPSIS
-    Switches the top-level Codex provider without touching conversation data.
+    切换顶层 Codex provider，不触及会话数据。
 
 .DESCRIPTION
-    This tool changes only the top-level model_provider entry in config.toml.
-    It never reads, copies, rewrites, indexes, archives, migrates, or deletes
-    sessions, archived sessions, SQLite databases, global state, auth, or backups.
-    Every Codex app must use the same CODEX_HOME to share local conversations.
+    此工具只修改 config.toml 顶层的 model_provider。
+    它不会读取、复制、改写、索引、归档、迁移或删除 sessions、archived_sessions、
+    SQLite 数据库、全局状态、认证或备份。所有 Codex 应用必须使用同一个
+    CODEX_HOME，才能共享本地会话。
 #>
 
 param(
@@ -21,10 +21,10 @@ param(
 
     [string]$OpenAIProvider = "openai",
 
-    # Kept so existing shortcuts and command lines remain compatible.
+    # 保留以兼容既有快捷方式和命令行参数。
     [string]$ProjectlessRoot = (Join-Path (Join-Path $HOME "Documents") "Codex"),
 
-    # Kept as a no-op for backward compatibility. Session rewriting is removed.
+    # 保留为空操作以兼容旧参数；会话改写功能已经移除。
     [switch]$SkipThreadRewrite
 )
 
@@ -34,7 +34,7 @@ function Resolve-ExistingDirectory {
     param([string]$Path)
 
     if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
-        throw "CodexHome not found: $Path"
+        throw "找不到 CodexHome 目录：$Path"
     }
 
     return (Resolve-Path -LiteralPath $Path).Path
@@ -192,7 +192,7 @@ function Assert-ProviderBlock {
     )
 
     if (-not (Get-ProviderBlock -Config $Config -Provider $Provider)) {
-        throw "Provider block [model_providers.$Provider] is missing for $ModeName. Configure it with the native provider tool first."
+        throw "模式 $ModeName 缺少服务提供方配置块 [model_providers.$Provider]。请先用对应服务提供方的原生工具完成配置。"
     }
 }
 
@@ -233,14 +233,26 @@ function Write-Kv {
         $Value
     )
 
-    $displayValue = if ($null -eq $Value -or $Value -eq "") { "<none>" } else { [string]$Value }
+    $displayValue = if ($null -eq $Value -or $Value -eq "") { "<未设置>" } else { [string]$Value }
     Write-Host ("  {0,-34} {1}" -f $Name, $displayValue)
+}
+
+function Get-ModeDisplayName {
+    param([string]$Value)
+
+    switch ($Value) {
+        "Normal" { return "OpenAI 默认" }
+        "Cockpit" { return "Cockpit" }
+        "CCSwitch" { return "CCSwitch" }
+        "Status" { return "仅查看状态" }
+        default { return $Value }
+    }
 }
 
 $resolvedCodexHome = Resolve-ExistingDirectory -Path $CodexHome
 $configPath = Join-Path $resolvedCodexHome "config.toml"
 if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
-    throw "config.toml not found: $configPath"
+    throw "找不到 config.toml：$configPath"
 }
 
 $originalConfig = [System.IO.File]::ReadAllText($configPath)
@@ -255,7 +267,7 @@ switch ($Mode) {
             $OpenAIProvider,
             "Codex API Service"
         )
-        $targetProvider = "OpenAI default"
+        $targetProvider = "OpenAI 默认"
     }
     "Cockpit" {
         Assert-ProviderBlock -Config $originalConfig -Provider $CockpitProvider -ModeName $Mode
@@ -268,7 +280,7 @@ switch ($Mode) {
         $targetProvider = $CCSwitchProvider
     }
     "Status" {
-        $targetProvider = "<read-only>"
+        $targetProvider = "<只读>"
     }
 }
 
@@ -282,32 +294,32 @@ $effectiveConfig = if ($configChanged) { $updatedConfig } else { $originalConfig
 $cockpitSummary = Get-ProviderSummary -Config $effectiveConfig -Provider $CockpitProvider
 $ccSwitchSummary = Get-ProviderSummary -Config $effectiveConfig -Provider $CCSwitchProvider
 
-Write-Rule "Codex Mode Switch Result"
-Write-Kv "Mode" $Mode
-Write-Kv "Target provider" $targetProvider
-Write-Kv "Top-level provider" (Get-TopLevelConfigValue -Config $effectiveConfig -Name "model_provider")
-Write-Kv "Top-level model" (Get-TopLevelConfigValue -Config $effectiveConfig -Name "model")
-Write-Kv "config.toml changed" $configChanged
+Write-Rule "Codex 模式切换结果"
+Write-Kv "模式" (Get-ModeDisplayName -Value $Mode)
+Write-Kv "目标服务提供方" $targetProvider
+Write-Kv "顶层服务提供方" (Get-TopLevelConfigValue -Config $effectiveConfig -Name "model_provider")
+Write-Kv "顶层模型" (Get-TopLevelConfigValue -Config $effectiveConfig -Name "model")
+Write-Kv "config.toml 是否变更" $configChanged
 
-Write-Rule "Shared Session Safety"
+Write-Rule "会话共享安全说明"
 Write-Kv "CODEX_HOME" $resolvedCodexHome
-Write-Kv "Legacy switcher backups" (Get-LegacyBackupCount -CodexHomePath $resolvedCodexHome)
-Write-Host "  This tool never reads or changes sessions, archived_sessions, SQLite, global state, auth, or backups."
-Write-Host "  No session migration, session copy, archive, or backup cleanup is performed."
-Write-Host "  To share history, launch every Codex app with this same CODEX_HOME."
+Write-Kv "旧版切换器备份数量" (Get-LegacyBackupCount -CodexHomePath $resolvedCodexHome)
+Write-Host "  此工具不会读取或改动 sessions、archived_sessions、SQLite、全局状态、认证或备份。"
+Write-Host "  不会执行会话迁移、会话复制、归档或备份清理。"
+Write-Host "  要共享历史，请让所有 Codex 应用使用同一个 CODEX_HOME。"
 
-Write-Rule "Provider Status"
-Write-Kv ("{0} block exists" -f $cockpitSummary.Provider) $cockpitSummary.Present
-Write-Kv ("{0} name" -f $cockpitSummary.Provider) $cockpitSummary.Name
+Write-Rule "服务提供方配置状态"
+Write-Kv ("{0} 配置块是否存在" -f $cockpitSummary.Provider) $cockpitSummary.Present
+Write-Kv ("{0} 名称" -f $cockpitSummary.Provider) $cockpitSummary.Name
 Write-Kv ("{0} wire_api" -f $cockpitSummary.Provider) $cockpitSummary.WireApi
-Write-Kv ("{0} block exists" -f $ccSwitchSummary.Provider) $ccSwitchSummary.Present
-Write-Kv ("{0} name" -f $ccSwitchSummary.Provider) $ccSwitchSummary.Name
+Write-Kv ("{0} 配置块是否存在" -f $ccSwitchSummary.Provider) $ccSwitchSummary.Present
+Write-Kv ("{0} 名称" -f $ccSwitchSummary.Provider) $ccSwitchSummary.Name
 Write-Kv ("{0} wire_api" -f $ccSwitchSummary.Provider) $ccSwitchSummary.WireApi
 
-Write-Rule "Next Step"
+Write-Rule "下一步"
 if ($Mode -eq "Status") {
-    Write-Host "  Status only. No file was changed."
+    Write-Host "  仅查看状态，没有修改文件。"
 }
 else {
-    Write-Host "  Close and reopen every Codex app so it reloads config.toml. Session history remains in place."
+    Write-Host "  请关闭并重新打开所有 Codex 应用，让它们重新加载 config.toml；会话历史保持不变。"
 }

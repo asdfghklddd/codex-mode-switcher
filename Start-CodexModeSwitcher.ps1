@@ -1,11 +1,11 @@
-<#
+﻿<#
 .SYNOPSIS
-    Hosts the dependency-free Codex mode panel on loopback only.
+    仅在本机回环地址提供零依赖 Codex 模式面板。
 
 .DESCRIPTION
-    Serves CodexModeSwitcher.html at a local 127.0.0.1 address and exposes only
-    authenticated local status/switch endpoints. It delegates mode changes to
-    Switch-CodexMode.ps1, which does not read or alter conversation data.
+    在本机 127.0.0.1 地址提供 CodexModeSwitcher.html，只开放经令牌认证的
+    本地状态与切换接口。模式切换由 Switch-CodexMode.ps1 执行，后者不会读取
+    或改动会话数据。
 #>
 
 param(
@@ -25,7 +25,7 @@ $htmlPath = Join-Path $repoRoot "CodexModeSwitcher.html"
 
 foreach ($requiredPath in @($switcherPath, $htmlPath)) {
     if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
-        throw "Required launcher file not found: $requiredPath"
+        throw "找不到所需启动文件：$requiredPath"
     }
 }
 
@@ -33,12 +33,12 @@ function Resolve-CodexHome {
     param([string]$Path)
 
     if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
-        throw "CodexHome not found: $Path"
+        throw "找不到 CodexHome 目录：$Path"
     }
 
     $resolved = (Resolve-Path -LiteralPath $Path).Path
     if (-not (Test-Path -LiteralPath (Join-Path $resolved "config.toml") -PathType Leaf)) {
-        throw "config.toml not found: $(Join-Path $resolved "config.toml")"
+        throw "找不到 config.toml：$(Join-Path $resolved "config.toml")"
     }
 
     return $resolved
@@ -109,7 +109,7 @@ function Start-LoopbackListener {
         }
     }
 
-    throw "No local port is available. Try again or start with -Port <unused-port>."
+    throw "没有可用的本机端口。请重试，或使用 -Port <未占用端口> 指定端口。"
 }
 
 function Write-BytesResponse {
@@ -165,7 +165,7 @@ function Read-RequestJson {
     }
 
     if ([string]::IsNullOrWhiteSpace($body)) {
-        throw "Request body is required."
+        throw "请求内容不能为空。"
     }
 
     return $body | ConvertFrom-Json
@@ -180,14 +180,14 @@ $panelUrl = "http://127.0.0.1:$portNumber/#$token"
 $keepRunning = $true
 
 Write-Output "PANEL_URL=$panelUrl"
-Write-Host "Codex Mode Switcher is running locally. Close this terminal or use '关闭本地面板' when finished."
+Write-Host "Codex 模式切换器已在本机运行。完成后请关闭此终端，或在网页中点击“关闭本地面板”。"
 
 if (-not $NoBrowser) {
     try {
         Start-Process -FilePath $panelUrl
     }
     catch {
-        Write-Warning "Could not open the browser automatically. Open this address manually: $panelUrl"
+        Write-Warning "无法自动打开浏览器。请手动打开此地址：$panelUrl"
     }
 }
 
@@ -204,7 +204,7 @@ try {
             }
 
             if (-not (Test-RequestToken -Request $request -ExpectedToken $token)) {
-                Write-JsonResponse -Context $context -StatusCode 403 -Data @{ error = "Unauthorized local request." }
+                Write-JsonResponse -Context $context -StatusCode 403 -Data @{ error = "未授权的本地请求。" }
                 continue
             }
 
@@ -217,7 +217,7 @@ try {
                 $payload = Read-RequestJson -Request $request
                 $mode = [string]$payload.mode
                 if ($mode -notin @("Normal", "Cockpit", "CCSwitch")) {
-                    throw "Unsupported mode: $mode"
+                    throw "不支持的模式：$mode"
                 }
 
                 & $switcherPath -Mode $mode -CodexHome $resolvedCodexHome *>&1 | Out-Null
@@ -231,7 +231,7 @@ try {
                 continue
             }
 
-            Write-JsonResponse -Context $context -StatusCode 404 -Data @{ error = "Unknown local endpoint." }
+            Write-JsonResponse -Context $context -StatusCode 404 -Data @{ error = "未知的本地接口。" }
         }
         catch {
             Write-JsonResponse -Context $context -StatusCode 400 -Data @{ error = $_.Exception.Message }

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>Codex Mode Switcher</title>
+  <title>Codex 模式切换器</title>
   <style>
     :root {
       --paper: #f5f1e7;
@@ -235,33 +235,33 @@
   <main class="shell">
     <header>
       <div>
-        <p class="eyebrow">configuration control / local only</p>
-        <h1>Codex<br>Mode Switcher</h1>
+        <p class="eyebrow">配置控制 / 仅限本机</p>
+        <h1>Codex<br>模式切换器</h1>
       </div>
-      <div class="local-lock"><span class="lock-dot"></span>127.0.0.1 only</div>
+      <div class="local-lock"><span class="lock-dot"></span>仅限 127.0.0.1</div>
     </header>
 
     <section class="status" aria-label="当前配置">
-      <div class="status-item"><span class="label">active provider</span><strong class="value" id="provider">读取中…</strong></div>
-      <div class="status-item"><span class="label">active model</span><strong class="value" id="model">读取中…</strong></div>
-      <div class="status-item"><span class="label">config home</span><strong class="value" id="home">读取中…</strong></div>
+      <div class="status-item"><span class="label">当前服务提供方</span><strong class="value" id="provider">读取中…</strong></div>
+      <div class="status-item"><span class="label">当前模型</span><strong class="value" id="model">读取中…</strong></div>
+      <div class="status-item"><span class="label">配置目录</span><strong class="value" id="home">读取中…</strong></div>
     </section>
 
     <section class="modes" aria-label="切换模式">
-      <button class="mode" type="button" data-mode="Normal" data-name="Normal">
-        <span class="mode-number">01 / NORMAL</span><h2>OpenAI 默认</h2><p>移除顶层指定 provider，回到正常 OpenAI 登录配置。</p><code>OpenAI default</code>
+      <button class="mode" type="button" data-mode="Normal" data-name="OpenAI 默认">
+        <span class="mode-number">01 / 默认模式</span><h2>OpenAI 默认</h2><p>移除顶层指定服务提供方，回到正常 OpenAI 登录配置。</p><code>OpenAI 默认</code>
       </button>
       <button class="mode" type="button" data-mode="Cockpit" data-name="Cockpit">
-        <span class="mode-number">02 / COCKPIT</span><h2>Cockpit</h2><p>选择本机已配置的 Cockpit provider。</p><code>codex_local_access</code>
+        <span class="mode-number">02 / COCKPIT</span><h2>Cockpit</h2><p>选择本机已配置的 Cockpit 服务提供方。</p><code>codex_local_access</code>
       </button>
       <button class="mode" type="button" data-mode="CCSwitch" data-name="CCSwitch">
-        <span class="mode-number">03 / CC SWITCH</span><h2>CCSwitch</h2><p>选择本机已配置的 custom provider。</p><code>custom</code>
+        <span class="mode-number">03 / CC SWITCH</span><h2>CCSwitch</h2><p>选择本机已配置的 custom 服务提供方。</p><code>custom</code>
       </button>
     </section>
 
     <aside class="notice">
       <div class="notice-mark">!</div>
-      <div><strong>会话安全锁定。</strong>此面板只修改 <code>config.toml</code> 的顶层 provider；不会读取、复制、迁移或删除任何会话、认证或备份文件。切换后请关闭并重新打开所有 Codex 应用。</div>
+      <div><strong>会话安全锁定。</strong>此面板只修改 <code>config.toml</code> 的顶层 <code>model_provider</code>；不会读取、复制、迁移或删除任何会话、认证或备份文件。切换后请关闭并重新打开所有 Codex 应用。</div>
     </aside>
 
     <footer>
@@ -301,8 +301,8 @@
       }
 
       function displayStatus(status) {
-        document.querySelector("#provider").textContent = status.provider || "OpenAI default";
-        document.querySelector("#model").textContent = status.model || "automatic";
+        document.querySelector("#provider").textContent = status.provider || "OpenAI 默认";
+        document.querySelector("#model").textContent = status.model || "自动选择";
         document.querySelector("#home").textContent = status.codexHome || "—";
       }
 

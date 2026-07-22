@@ -9,16 +9,16 @@ host_arch="$(uname -m)"
 
 for required_file in "$script" "$panel"; do
   if [[ ! -f "$required_file" ]]; then
-    echo "Required launcher file not found: $required_file"
+    echo "找不到所需启动文件：$required_file"
     exit 1
   fi
 done
 
 if ! command -v pwsh >/dev/null 2>&1; then
   if [[ "$host_os" == "Darwin" ]]; then
-    echo "Native PowerShell 7 is required for macOS. Install it with: brew install --cask powershell"
+    echo "macOS 需要原生 PowerShell 7。请运行：brew install --cask powershell"
   else
-    echo "PowerShell 7 (pwsh) is required to run this launcher."
+    echo "运行此启动器需要 PowerShell 7（pwsh）。"
   fi
   exit 1
 fi
@@ -29,8 +29,8 @@ if [[ "$host_os" == "Darwin" && "$host_arch" == "arm64" ]] && command -v file >/
   pwsh_path="$(command -v pwsh)"
   pwsh_arch="$(file -Lb "$pwsh_path" 2>/dev/null || true)"
   if [[ "$pwsh_arch" != *"arm64"* ]]; then
-    echo "Warning: pwsh does not appear to be an arm64 build and may run through Rosetta."
-    echo "For Apple Silicon (including M4), install native PowerShell 7: brew install --cask powershell"
+    echo "警告：pwsh 似乎不是 arm64 原生版本，可能会通过 Rosetta 运行。"
+    echo "Apple Silicon（包括 M4）请安装原生 PowerShell 7：brew install --cask powershell"
   fi
 fi
 
@@ -42,7 +42,7 @@ case "$mode_key" in
   ccswitch|cc) mode="CCSwitch" ;;
   status) mode="Status" ;;
   ui|panel) mode="UI" ;;
-  *) echo "Usage: $0 [ui|normal|cockpit|ccswitch|status]"; exit 1 ;;
+  *) echo "用法：$0 [ui|normal|cockpit|ccswitch|status]"; exit 1 ;;
 esac
 
 if [[ "$mode" == "UI" ]]; then
@@ -53,5 +53,5 @@ fi
 "$powershell_bin" -NoLogo -NoProfile -File "$script" -Mode "$mode"
 if [[ "$mode" != "Status" ]]; then
   echo
-  echo "Close and reopen every Codex app after switching mode."
+  echo "切换后请关闭并重新打开所有 Codex 应用。"
 fi
