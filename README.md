@@ -2,6 +2,11 @@
 
 Small Windows/macOS launcher for selecting the top-level Codex provider in one shared `CODEX_HOME`.
 
+Double-clicking its launcher opens a dependency-free local HTML control panel. The
+page uses only HTML, CSS, and browser JavaScript; a PowerShell bridge listens on
+`127.0.0.1` to apply the existing safe switch script. A random per-launch token
+is required for every local API request.
+
 ## What it changes
 
 The switcher changes only the top-level `model_provider` in `config.toml`:
@@ -22,17 +27,22 @@ Historical conversation metadata is private implementation data. Changing a runt
 
 ## Files
 
-- `Switch-CodexMode.bat`: Windows interactive menu.
+- `Switch-CodexMode.bat`: Windows panel launcher (with numbered CLI compatibility).
 - `Switch-CodexMode.ps1`: main implementation.
-- `Switch-CodexMode.sh`: macOS/Linux command-line wrapper.
-- `Switch-CodexMode.command`: macOS Finder wrapper.
+- `Start-CodexModeSwitcher.ps1`: loopback-only bridge for the local panel.
+- `CodexModeSwitcher.html`: dependency-free panel UI.
+- `Switch-CodexMode.sh`: macOS/Linux panel and command-line wrapper.
+- `Switch-CodexMode.command`: macOS Finder panel launcher.
 - `tests/Invoke-SwitcherSelfTest.ps1`: isolated no-session-mutation test.
 
 ## Usage
 
-Close every Codex app, then choose a provider and reopen the apps so they reload `config.toml`.
+Close every Codex app, then open the launcher with no arguments. It opens the
+local control panel in your default browser. Choose a provider and reopen every
+Codex app so it reloads `config.toml`.
 
 ```powershell
+.\Switch-CodexMode.bat       # Open the local HTML panel
 .\Switch-CodexMode.bat 1  # Normal
 .\Switch-CodexMode.bat 2  # Cockpit
 .\Switch-CodexMode.bat 3  # CCSwitch
@@ -62,9 +72,10 @@ repository source:
 xattr -d com.apple.quarantine ./Switch-CodexMode.command
 ```
 
-On macOS/Linux, command-line use is:
+On macOS/Linux, no argument opens the HTML panel; explicit command-line use is:
 
 ```bash
+bash ./Switch-CodexMode.sh ui
 bash ./Switch-CodexMode.sh status
 bash ./Switch-CodexMode.sh normal
 bash ./Switch-CodexMode.sh cockpit
@@ -86,3 +97,9 @@ The test confirms all modes work and verifies that fixture session JSONL, archiv
 Its fixture paths are platform-neutral, so run the same test on macOS with
 `pwsh -NoProfile -File ./tests/Invoke-SwitcherSelfTest.ps1` after copying the
 repository there.
+
+Run the isolated browser-panel integration test with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Invoke-WebPanelSelfTest.ps1
+```
