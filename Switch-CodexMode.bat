@@ -4,6 +4,7 @@ chcp 65001 >nul
 
 set "SCRIPT=%~dp0Switch-CodexMode.ps1"
 set "PANEL=%~dp0Start-CodexModeSwitcher.ps1"
+set "SYNC_HELPER=%~dp0session_provider_sync.py"
 
 if not exist "%SCRIPT%" (
   echo 找不到 Switch-CodexMode.ps1，请确认它与此 BAT 文件位于同一目录。
@@ -13,6 +14,12 @@ if not exist "%SCRIPT%" (
 
 if not exist "%PANEL%" (
   echo 找不到 Start-CodexModeSwitcher.ps1，请确认它与此 BAT 文件位于同一目录。
+  pause
+  exit /b 1
+)
+
+if not exist "%SYNC_HELPER%" (
+  echo 找不到 session_provider_sync.py，请确认它与此 BAT 文件位于同一目录。
   pause
   exit /b 1
 )

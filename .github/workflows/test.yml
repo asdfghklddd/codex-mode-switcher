@@ -1,0 +1,47 @@
+name: Cross-platform tests
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Ensure PowerShell 7 on macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: command -v pwsh >/dev/null 2>&1 || brew install --cask powershell
+
+      - name: Python backup and rollback tests
+        run: python -m unittest -v tests.test_session_provider_sync
+
+      - name: PowerShell switcher integration tests
+        shell: pwsh
+        run: ./tests/Invoke-SwitcherSelfTest.ps1
+
+      - name: Local web panel integration tests
+        shell: pwsh
+        run: ./tests/Invoke-WebPanelSelfTest.ps1
+
+      - name: POSIX launcher syntax
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          bash -n ./Switch-CodexMode.sh
+          bash -n ./Switch-CodexMode.command

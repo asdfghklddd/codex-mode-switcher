@@ -261,7 +261,7 @@
 
     <aside class="notice">
       <div class="notice-mark">!</div>
-      <div><strong>会话可见性同步。</strong>切换前会创建可恢复备份，再同步配置、SQLite 与 JSONL 中的 provider 元数据；不会读取会话正文或修改认证文件。切换后请关闭并重新打开所有 Codex 应用。</div>
+      <div><strong>会话可见性同步。</strong>工具低频维护一个已验证的全量基线；每次切换只创建不含会话正文的轻量回滚日志，再同步配置、SQLite 与 JSONL provider。切换后请关闭并重新打开所有 Codex 应用。</div>
     </aside>
 
     <footer>
@@ -314,7 +314,7 @@
       async function switchMode(button) {
         const mode = button.dataset.mode;
         const name = button.dataset.name;
-        if (!window.confirm(`切换到 ${name}？\n\n将先创建备份，再同步配置与会话 provider 元数据，以保持历史任务可见。`)) return;
+        if (!window.confirm(`切换到 ${name}？\n\n将复用低频全量基线，并记录轻量回滚日志后同步会话 provider。`)) return;
         setBusy(true);
         setMessage(`正在切换到 ${name}…`);
         try {
