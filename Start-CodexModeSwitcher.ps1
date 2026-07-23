@@ -4,8 +4,8 @@
 
 .DESCRIPTION
     在本机 127.0.0.1 地址提供 CodexModeSwitcher.html，只开放经令牌认证的
-    本地状态与切换接口。模式切换由 Switch-CodexMode.ps1 执行，后者不会读取
-    或改动会话数据。
+    本地状态与切换接口。模式切换由 Switch-CodexMode.ps1 执行；非状态模式会
+    先备份，再同步 SQLite 与 JSONL 中的会话 provider 元数据。
 #>
 
 param(

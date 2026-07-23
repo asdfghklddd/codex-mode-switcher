@@ -261,7 +261,7 @@
 
     <aside class="notice">
       <div class="notice-mark">!</div>
-      <div><strong>会话安全锁定。</strong>此面板只修改 <code>config.toml</code> 的顶层 <code>model_provider</code>；不会读取、复制、迁移或删除任何会话、认证或备份文件。切换后请关闭并重新打开所有 Codex 应用。</div>
+      <div><strong>会话可见性同步。</strong>切换前会创建可恢复备份，再同步配置、SQLite 与 JSONL 中的 provider 元数据；不会读取会话正文或修改认证文件。切换后请关闭并重新打开所有 Codex 应用。</div>
     </aside>
 
     <footer>
@@ -314,7 +314,7 @@
       async function switchMode(button) {
         const mode = button.dataset.mode;
         const name = button.dataset.name;
-        if (!window.confirm(`切换到 ${name}？\n\n只会修改 config.toml 的顶层 provider，不会处理会话数据。`)) return;
+        if (!window.confirm(`切换到 ${name}？\n\n将先创建备份，再同步配置与会话 provider 元数据，以保持历史任务可见。`)) return;
         setBusy(true);
         setMessage(`正在切换到 ${name}…`);
         try {

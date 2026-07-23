@@ -6,21 +6,19 @@
 
 ## 会修改什么
 
-切换器只会修改 `config.toml` 中顶层的 `model_provider`：
+切换器会修改 `config.toml` 中顶层的 `model_provider`，并同步本地会话索引中的 provider：
 
 - `Normal`：移除受管理的顶层 provider，使用正常的 OpenAI 默认配置。
 - `Cockpit`：选择 `codex_local_access`。
 - `CCSwitch`：选择 `custom`。
-- `Status`：仅读取配置。
+- `Status`：仅读取配置，不扫描或修改会话。
 
-它绝不会读取、复制、改写、索引、归档、迁移或删除：
+为保证切换后仍能看到同一批历史任务，非 `Status` 模式会同步：
 
-- `sessions/` 或 `archived_sessions/`
-- SQLite 数据库或全局状态
-- 认证文件
-- 备份目录
+- `state_5.sqlite` 中 `threads.model_provider`
+- `sessions/` 与 `archived_sessions/` 中 `session_meta.model_provider`
 
-历史会话元数据属于私有实现数据，切换运行时 provider 不应改写它。若要让不同 Codex 启动器共享本地会话，所有启动器必须使用同一个 `CODEX_HOME`（通常为 `~/.codex`）。
+每次同步前会创建 `backup-*-codex-mode-switch` 备份，其中包含切换前的配置、SQLite 快照和被修改的原始 JSONL。工具不会读取会话正文，不会修改认证、归档状态或全局状态。所有启动器仍须使用同一个 `CODEX_HOME`（通常为 `~/.codex`）。
 
 ## 文件说明
 
@@ -30,7 +28,7 @@
 - `CodexModeSwitcher.html`：无依赖的面板界面。
 - `Switch-CodexMode.sh`：macOS/Linux 面板与命令行启动器。
 - `Switch-CodexMode.command`：macOS Finder 面板启动器。
-- `tests/Invoke-SwitcherSelfTest.ps1`：隔离环境下的会话不变性测试。
+- `tests/Invoke-SwitcherSelfTest.ps1`：隔离环境下的 provider 同步与备份测试。
 
 ## 使用方法
 
@@ -81,7 +79,7 @@ macOS 的共享默认目录为 `~/.codex`。不要为各个 Codex 启动器设�
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Invoke-SwitcherSelfTest.ps1
 ```
 
-此测试会验证所有模式，并确认测试用的会话 JSONL、归档 JSONL、SQLite、全局状态与备份目录均未改变。测试路径不依赖具体平台；复制仓库到 macOS 后，可运行：
+此测试会验证所有模式、SQLite/JSONL provider 同步、未知 provider 保留、备份生成，以及 `Status`/`SkipThreadRewrite` 不改会话。测试路径不依赖具体平台；复制仓库到 macOS 后，可运行：
 
 ```bash
 pwsh -NoProfile -File ./tests/Invoke-SwitcherSelfTest.ps1
