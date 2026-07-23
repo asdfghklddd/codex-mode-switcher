@@ -5,7 +5,8 @@
 .DESCRIPTION
     此工具修改 config.toml 顶层的 model_provider，并同步 state_5.sqlite 与
     sessions、archived_sessions 中的 model_provider，使同一 CODEX_HOME 下的
-    历史会话在切换后保持可见。每次同步前都会创建可恢复备份。
+    历史会话在切换后保持可见。工具低频维护一个已验证的全量基线，并为每次
+    实际修改创建轻量回滚日志。
 #>
 
 param(
@@ -24,7 +25,15 @@ param(
     [string]$ProjectlessRoot = (Join-Path (Join-Path $HOME "Documents") "Codex"),
 
     # 兼容旧参数；指定后只切换配置，不同步会话 provider。
-    [switch]$SkipThreadRewrite
+    [switch]$SkipThreadRewrite,
+
+    [ValidateRange(1, 3650)]
+    [int]$FullBackupMaxAgeDays = 7,
+
+    [ValidateRange(1, 1000)]
+    [int]$RollbackRetentionCount = 20,
+
+    [switch]$ForceFullBackup
 )
 
 $ErrorActionPreference = "Stop"
@@ -39,157 +48,58 @@ function Resolve-ExistingDirectory {
     return (Resolve-Path -LiteralPath $Path).Path
 }
 
-function New-ModeBackup {
-    param([string]$CodexHomePath)
-
-    $stamp = Get-Date -Format "yyyyMMdd-HHmmss-fff"
-    $backupDir = Join-Path $CodexHomePath "backup-$stamp-codex-mode-switch"
-    New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
-
-    $configPath = Join-Path $CodexHomePath "config.toml"
-    if (Test-Path -LiteralPath $configPath -PathType Leaf) {
-        Copy-Item -LiteralPath $configPath -Destination (Join-Path $backupDir "config.toml") -Force
-    }
-
-    return $backupDir
-}
-
 function Invoke-SessionProviderSync {
     param(
         [string]$CodexHomePath,
-        [string]$BackupDir,
+        [string]$BackupRoot,
         [string]$TargetProvider,
-        [string[]]$SourceProviders
+        [string[]]$SourceProviders,
+        [string]$UpdatedConfig,
+        [bool]$ConfigChanged,
+        [int]$FullBackupMaxAgeDays,
+        [int]$RollbackRetentionCount,
+        [bool]$ForceFullBackup
     )
 
-    $python = Get-Command python -ErrorAction SilentlyContinue
+    $python = Get-Command python3 -ErrorAction SilentlyContinue
     if (-not $python) {
-        $python = Get-Command python3 -ErrorAction SilentlyContinue
+        $python = Get-Command python -ErrorAction SilentlyContinue
     }
     if (-not $python) {
         throw "PATH 中找不到 python/python3，无法安全同步会话 provider。"
     }
 
-    $pythonCode = @'
-import json
-import os
-import pathlib
-import shutil
-import sqlite3
-import sys
-import uuid
+    $helperPath = Join-Path (Split-Path -Parent $PSCommandPath) "session_provider_sync.py"
+    if (-not (Test-Path -LiteralPath $helperPath -PathType Leaf)) {
+        throw "找不到会话同步模块：$helperPath"
+    }
 
-
-codex_home = pathlib.Path(sys.argv[1])
-backup_dir = pathlib.Path(sys.argv[2])
-target_provider = sys.argv[3]
-source_providers = set(sys.argv[4:])
-
-result = {
-    "sqlite_rows_changed": 0,
-    "jsonl_files_scanned": 0,
-    "jsonl_files_changed": 0,
-    "jsonl_records_changed": 0,
-    "errors": [],
-}
-
-db_path = codex_home / "state_5.sqlite"
-if db_path.exists():
-    try:
-        backup_db = backup_dir / "state_5.sqlite"
-        with sqlite3.connect(db_path, timeout=15) as source:
-            with sqlite3.connect(backup_db) as destination:
-                source.backup(destination)
-
-        with sqlite3.connect(db_path, timeout=15) as connection:
-            tables = {row[0] for row in connection.execute(
-                "select name from sqlite_master where type = 'table'"
-            )}
-            if "threads" in tables:
-                columns = {row[1] for row in connection.execute("pragma table_info(threads)")}
-                if "model_provider" in columns and source_providers:
-                    placeholders = ",".join("?" for _ in source_providers)
-                    cursor = connection.execute(
-                        f"update threads set model_provider = ? where model_provider in ({placeholders})",
-                        [target_provider, *sorted(source_providers)],
-                    )
-                    result["sqlite_rows_changed"] = cursor.rowcount
-    except Exception as exc:
-        raise RuntimeError(f"SQLite 同步失败: {exc}") from exc
-
-for root_name in ("sessions", "archived_sessions"):
-    root = codex_home / root_name
-    if not root.exists():
-        continue
-
-    for path in root.rglob("*.jsonl"):
-        result["jsonl_files_scanned"] += 1
-        try:
-            raw = path.read_bytes()
-            text = raw.decode("utf-8-sig")
-            newline = "\r\n" if "\r\n" in text else "\n"
-            had_final_newline = text.endswith(("\r", "\n"))
-            lines = text.splitlines()
-            changed = 0
-
-            for index, line in enumerate(lines):
-                if '"session_meta"' not in line and "'session_meta'" not in line:
-                    continue
-                try:
-                    item = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-
-                payload = item.get("payload") if isinstance(item, dict) else None
-                if item.get("type") != "session_meta" or not isinstance(payload, dict):
-                    continue
-                if payload.get("model_provider") not in source_providers:
-                    continue
-
-                payload["model_provider"] = target_provider
-                lines[index] = json.dumps(item, ensure_ascii=False, separators=(",", ":"))
-                changed += 1
-
-            if not changed:
-                continue
-
-            relative = path.relative_to(codex_home)
-            backup_path = backup_dir / "rollouts" / relative
-            backup_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(path, backup_path)
-
-            updated = newline.join(lines)
-            if had_final_newline:
-                updated += newline
-            temp_path = path.with_name(path.name + f".switch-{uuid.uuid4().hex}.tmp")
-            try:
-                temp_path.write_text(updated, encoding="utf-8", newline="")
-                os.replace(temp_path, path)
-            finally:
-                if temp_path.exists():
-                    temp_path.unlink()
-
-            result["jsonl_files_changed"] += 1
-            result["jsonl_records_changed"] += changed
-        except Exception as exc:
-            result["errors"].append(f"{path}: {exc}")
-
-print(json.dumps(result, ensure_ascii=False))
-'@
-
-    $tempScript = Join-Path ([System.IO.Path]::GetTempPath()) "switch_codex_sessions_$([Guid]::NewGuid().ToString('N')).py"
-    Set-Content -LiteralPath $tempScript -Value $pythonCode -Encoding UTF8
+    $tempConfig = Join-Path ([System.IO.Path]::GetTempPath()) "switch_codex_config_$([Guid]::NewGuid().ToString('N')).toml"
+    [System.IO.File]::WriteAllText($tempConfig, $UpdatedConfig, [System.Text.UTF8Encoding]::new($false))
     try {
-        $arguments = @($tempScript, $CodexHomePath, $BackupDir, $TargetProvider) + $SourceProviders
-        $output = & $python.Source @arguments
+        $arguments = @(
+            $helperPath,
+            "--codex-home", $CodexHomePath,
+            "--backup-root", $BackupRoot,
+            "--target-provider", $TargetProvider,
+            "--updated-config", $tempConfig,
+            "--config-changed", $(if ($ConfigChanged) { "1" } else { "0" }),
+            "--full-backup-max-age-days", [string]$FullBackupMaxAgeDays,
+            "--rollback-retention-count", [string]$RollbackRetentionCount,
+            "--force-full-backup", $(if ($ForceFullBackup) { "1" } else { "0" })
+        )
+        foreach ($provider in $SourceProviders) {
+            $arguments += @("--source-provider", $provider)
+        }
+        $output = & $python.Source @arguments 2>&1
         if ($LASTEXITCODE -ne 0) {
             throw "会话 provider 同步失败：$($output -join [Environment]::NewLine)"
         }
         return (($output -join [Environment]::NewLine) | ConvertFrom-Json)
     }
     finally {
-        if (Test-Path -LiteralPath $tempScript) {
-            Remove-Item -LiteralPath $tempScript -Force
+        if (Test-Path -LiteralPath $tempConfig) {
+            Remove-Item -LiteralPath $tempConfig -Force
         }
     }
 }
@@ -365,13 +275,6 @@ function Get-ProviderSummary {
     }
 }
 
-function Get-LegacyBackupCount {
-    param([string]$CodexHomePath)
-
-    return @(Get-ChildItem -LiteralPath $CodexHomePath -Directory -Force |
-        Where-Object { $_.Name -like "backup-*-codex-mode-switch" }).Count
-}
-
 function Write-Rule {
     param([string]$Text)
 
@@ -399,6 +302,23 @@ function Get-ModeDisplayName {
         "Cockpit" { return "Cockpit" }
         "CCSwitch" { return "CCSwitch" }
         "Status" { return "仅查看状态" }
+        default { return $Value }
+    }
+}
+
+function Get-BackupDecisionDisplayName {
+    param([string]$Value)
+
+    switch ($Value) {
+        "missing" { return "首次创建" }
+        "reused" { return "复用现有基线" }
+        "not_required" { return "本次无需全量备份" }
+        "forced" { return "手动强制刷新" }
+        "expired" { return "基线已过期，完成刷新" }
+        "format_changed" { return "备份格式变化，完成刷新" }
+        "sqlite_schema_changed" { return "数据库结构变化，完成刷新" }
+        "invalid_created_at" { return "基线时间无效，完成刷新" }
+        "reused_after_refresh_failure" { return "刷新失败，保留原有基线" }
         default { return $Value }
     }
 }
@@ -442,22 +362,31 @@ switch ($Mode) {
     }
 }
 
+$configWillChange = $Mode -ne "Status" -and -not [string]::Equals(
+    $originalConfig,
+    $updatedConfig,
+    [System.StringComparison]::Ordinal
+)
 $configChanged = $false
-$backupDir = $null
+$backupRoot = Join-Path $resolvedCodexHome "codex-mode-switch-backups"
 $sessionSync = $null
 if ($Mode -ne "Status" -and -not $SkipThreadRewrite) {
     $knownProviders = @($OpenAIProvider, $CockpitProvider, $CCSwitchProvider, "Codex API Service") |
         Where-Object { $_ -and $_ -ne $sessionTargetProvider } |
         Select-Object -Unique
-    $backupDir = New-ModeBackup -CodexHomePath $resolvedCodexHome
     $sessionSync = Invoke-SessionProviderSync `
         -CodexHomePath $resolvedCodexHome `
-        -BackupDir $backupDir `
+        -BackupRoot $backupRoot `
         -TargetProvider $sessionTargetProvider `
-        -SourceProviders $knownProviders
+        -SourceProviders $knownProviders `
+        -UpdatedConfig $updatedConfig `
+        -ConfigChanged $configWillChange `
+        -FullBackupMaxAgeDays $FullBackupMaxAgeDays `
+        -RollbackRetentionCount $RollbackRetentionCount `
+        -ForceFullBackup $ForceFullBackup
+    $configChanged = [bool]$sessionSync.config_changed
 }
-
-if ($Mode -ne "Status" -and -not [string]::Equals($originalConfig, $updatedConfig, [System.StringComparison]::Ordinal)) {
+elseif ($configWillChange) {
     [System.IO.File]::WriteAllText($configPath, $updatedConfig, [System.Text.UTF8Encoding]::new($false))
     $configChanged = $true
 }
@@ -475,20 +404,22 @@ Write-Kv "config.toml 是否变更" $configChanged
 
 Write-Rule "会话同步结果"
 Write-Kv "CODEX_HOME" $resolvedCodexHome
-Write-Kv "本次备份" $backupDir
 if ($sessionSync) {
+    Write-Kv "全量备份基线" $sessionSync.full_backup_path
+    Write-Kv "本次是否新建全量备份" $sessionSync.full_backup_created
+    Write-Kv "全量备份决策" (Get-BackupDecisionDisplayName -Value $sessionSync.full_backup_reason)
+    Write-Kv "本次轻量回滚日志" $sessionSync.transaction_path
     Write-Kv "SQLite 会话行已同步" $sessionSync.sqlite_rows_changed
     Write-Kv "JSONL 文件已同步" ("{0} / {1}" -f $sessionSync.jsonl_files_changed, $sessionSync.jsonl_files_scanned)
     Write-Kv "JSONL 元数据已同步" $sessionSync.jsonl_records_changed
-    if ($sessionSync.errors.Count -gt 0) {
-        Write-Warning ("有 {0} 个 JSONL 文件同步失败，原文件未被覆盖。" -f $sessionSync.errors.Count)
-        foreach ($syncError in $sessionSync.errors | Select-Object -First 5) {
-            Write-Warning $syncError
-        }
+    if ($sessionSync.full_backup_warning) {
+        Write-Warning ("全量备份刷新失败，继续使用既有已验证基线：{0}" -f $sessionSync.full_backup_warning)
     }
 }
 elseif ($Mode -eq "Status") {
     Write-Host "  仅查看状态，未读取或改动会话元数据。"
+    $statusFullBackup = Join-Path $backupRoot "full-latest.zip"
+    Write-Kv "全量备份基线" $(if (Test-Path -LiteralPath $statusFullBackup -PathType Leaf) { $statusFullBackup } else { $null })
 }
 else {
     Write-Host "  已按 -SkipThreadRewrite 跳过会话 provider 同步。"

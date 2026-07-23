@@ -112,7 +112,7 @@ for relative, provider in [
     $statusHashes = @{}
     foreach ($path in @(
         (Join-Path $codexHome "state_5.sqlite"),
-        (Join-Path $codexHome "sessions\openai.jsonl"),
+        (Join-Path (Join-Path $codexHome "sessions") "openai.jsonl"),
         $globalStatePath
     )) {
         $statusHashes[$path] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
@@ -123,11 +123,22 @@ for relative, provider in [
     foreach ($path in $statusHashes.Keys) {
         Assert-True ($statusHashes[$path] -eq (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash) "Status 模式修改了文件：$path"
     }
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $codexHome "codex-mode-switch-backups"))) "Status 模式不应创建备份目录。"
 
-    foreach ($mode in @("CCSwitch", "Normal", "Cockpit")) {
-        & $powershell.Source -NoProfile -ExecutionPolicy Bypass -File $switcher -Mode $mode -CodexHome $codexHome | Out-Null
+    & $powershell.Source -NoProfile -ExecutionPolicy Bypass -File $switcher -Mode CCSwitch -CodexHome $codexHome -RollbackRetentionCount 2 | Out-Null
+    Assert-True ($LASTEXITCODE -eq 0) "切换器在 CCSwitch 模式下执行失败。"
+    $backupRoot = Join-Path $codexHome "codex-mode-switch-backups"
+    $fullBackup = Join-Path $backupRoot "full-latest.zip"
+    Assert-True (Test-Path -LiteralPath $fullBackup -PathType Leaf) "首次迁移没有创建全量备份基线。"
+    $fullBackupHash = (Get-FileHash -LiteralPath $fullBackup -Algorithm SHA256).Hash
+    $fullBackupTimestamp = (Get-Item -LiteralPath $fullBackup).LastWriteTimeUtc
+
+    foreach ($mode in @("Normal", "Cockpit")) {
+        & $powershell.Source -NoProfile -ExecutionPolicy Bypass -File $switcher -Mode $mode -CodexHome $codexHome -RollbackRetentionCount 2 | Out-Null
         Assert-True ($LASTEXITCODE -eq 0) "切换器在 $mode 模式下执行失败。"
     }
+    Assert-True ($fullBackupHash -eq (Get-FileHash -LiteralPath $fullBackup -Algorithm SHA256).Hash) "短期重复切换不应重建全量备份。"
+    Assert-True ($fullBackupTimestamp -eq (Get-Item -LiteralPath $fullBackup).LastWriteTimeUtc) "短期重复切换改写了全量备份时间。"
 
     $config = Get-Content -Raw -LiteralPath (Join-Path $codexHome "config.toml")
     Assert-True ($config -match '(?m)^model_provider\s*=\s*"codex_local_access"\s*$') "最终顶层 provider 应为 Cockpit。"
@@ -163,18 +174,36 @@ for path in list((codex_home / "sessions").rglob("*.jsonl")) + list((codex_home 
         raise SystemExit(f"session body changed in {path}")
 '@ -Arguments @($codexHome) | Out-Null
 
-    $backupDirs = @(Get-ChildItem -LiteralPath $codexHome -Directory -Filter "backup-*-codex-mode-switch")
-    Assert-True ($backupDirs.Count -eq 3) "每次会话同步都应创建一个备份。"
-    foreach ($backupDir in $backupDirs) {
-        Assert-True (Test-Path -LiteralPath (Join-Path $backupDir.FullName "config.toml")) "备份缺少 config.toml。"
-        Assert-True (Test-Path -LiteralPath (Join-Path $backupDir.FullName "state_5.sqlite")) "备份缺少 SQLite 快照。"
+    Invoke-Python -Code @'
+import json
+import pathlib
+import sys
+import zipfile
+
+backup = pathlib.Path(sys.argv[1])
+with zipfile.ZipFile(backup, "r") as archive:
+    if archive.testzip() is not None:
+        raise SystemExit("full backup failed CRC verification")
+    manifest = json.loads(archive.read("manifest.json"))
+    if manifest["session_file_count"] != 4:
+        raise SystemExit(f"unexpected full backup session count: {manifest}")
+'@ -Arguments @($fullBackup) | Out-Null
+
+    $transactions = @(Get-ChildItem -LiteralPath (Join-Path $backupRoot "transactions") -Directory)
+    Assert-True ($transactions.Count -eq 2) "轻量回滚日志没有按保留上限清理。"
+    foreach ($transaction in $transactions) {
+        $rollback = Get-Content -LiteralPath (Join-Path $transaction.FullName "rollback.json") -Raw -Encoding UTF8
+        Assert-True ($rollback -notmatch 'sentinel|response_item') "轻量回滚日志不应保存会话正文。"
+        Assert-True (($rollback | ConvertFrom-Json).status -eq "completed") "回滚日志状态不是 completed。"
     }
 
     $dbHashBeforeSkip = (Get-FileHash -LiteralPath (Join-Path $codexHome "state_5.sqlite") -Algorithm SHA256).Hash
+    $transactionCountBeforeSkip = $transactions.Count
     & $powershell.Source -NoProfile -ExecutionPolicy Bypass -File $switcher -Mode CCSwitch -CodexHome $codexHome -SkipThreadRewrite | Out-Null
     Assert-True ($LASTEXITCODE -eq 0) "SkipThreadRewrite 模式执行失败。"
     Assert-True ($dbHashBeforeSkip -eq (Get-FileHash -LiteralPath (Join-Path $codexHome "state_5.sqlite") -Algorithm SHA256).Hash) "SkipThreadRewrite 修改了 SQLite。"
-    Assert-True ($backupDirs.Count -eq @(Get-ChildItem -LiteralPath $codexHome -Directory -Filter "backup-*-codex-mode-switch").Count) "SkipThreadRewrite 不应创建备份。"
+    Assert-True ($transactionCountBeforeSkip -eq @(Get-ChildItem -LiteralPath (Join-Path $backupRoot "transactions") -Directory).Count) "SkipThreadRewrite 不应创建回滚日志。"
+    Assert-True ($fullBackupHash -eq (Get-FileHash -LiteralPath $fullBackup -Algorithm SHA256).Hash) "SkipThreadRewrite 不应重建全量备份。"
     Assert-True ($globalStateHash -eq (Get-FileHash -LiteralPath $globalStatePath -Algorithm SHA256).Hash) "切换器修改了全局状态。"
 
     Write-Host "核心自测通过。"

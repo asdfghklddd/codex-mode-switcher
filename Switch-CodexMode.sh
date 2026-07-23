@@ -4,10 +4,11 @@ set -euo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 script="$script_dir/Switch-CodexMode.ps1"
 panel="$script_dir/Start-CodexModeSwitcher.ps1"
+sync_helper="$script_dir/session_provider_sync.py"
 host_os="$(uname -s)"
 host_arch="$(uname -m)"
 
-for required_file in "$script" "$panel"; do
+for required_file in "$script" "$panel" "$sync_helper"; do
   if [[ ! -f "$required_file" ]]; then
     echo "找不到所需启动文件：$required_file"
     exit 1
@@ -20,6 +21,11 @@ if ! command -v pwsh >/dev/null 2>&1; then
   else
     echo "运行此启动器需要 PowerShell 7（pwsh）。"
   fi
+  exit 1
+fi
+
+if ! command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; then
+  echo "运行此启动器需要 Python 3.8 或更高版本。"
   exit 1
 fi
 

@@ -18,12 +18,18 @@
 - `state_5.sqlite` 中 `threads.model_provider`
 - `sessions/` 与 `archived_sessions/` 中 `session_meta.model_provider`
 
-每次同步前会创建 `backup-*-codex-mode-switch` 备份，其中包含切换前的配置、SQLite 快照和被修改的原始 JSONL。工具不会读取会话正文，不会修改认证、归档状态或全局状态。所有启动器仍须使用同一个 `CODEX_HOME`（通常为 `~/.codex`）。
+备份分为两层：
+
+- `codex-mode-switch-backups/full-latest.zip`：唯一的已验证全量基线，默认最多每 7 天按需刷新一次；数据库结构或备份格式变化时也会刷新。新候选通过 ZIP CRC 校验后才原子替换旧基线。
+- `codex-mode-switch-backups/transactions/`：每次实际修改的轻量回滚日志，只保存线程 ID、JSONL 相对路径、行号和原 provider，不保存会话正文；默认保留最近 20 次成功切换，失败记录不会被自动清理。
+
+若配置、JSONL 或 SQLite 任一步失败，本次已完成的修改会自动回滚。工具不会修改认证、归档状态或全局状态。所有启动器仍须使用同一个 `CODEX_HOME`（通常为 `~/.codex`）。旧版 `backup-*-codex-mode-switch` 目录不会被自动删除。
 
 ## 文件说明
 
 - `Switch-CodexMode.bat`：Windows 面板启动器（保留数字参数的命令行兼容）。
 - `Switch-CodexMode.ps1`：核心切换逻辑。
+- `session_provider_sync.py`：跨 Windows/macOS 的备份、事务与 provider 同步引擎。
 - `Start-CodexModeSwitcher.ps1`：仅限回环地址的本地面板桥接。
 - `CodexModeSwitcher.html`：无依赖的面板界面。
 - `Switch-CodexMode.sh`：macOS/Linux 面板与命令行启动器。
@@ -44,10 +50,11 @@
 
 ### macOS Apple Silicon（M1/M2/M3/M4）
 
-核心脚本使用与架构无关的 PowerShell/.NET 代码。Apple Silicon 请安装原生 arm64 PowerShell 7；启动器检测到疑似 Rosetta 版本时会给出提示，而不会静默依赖它。
+核心脚本使用平台无关的 PowerShell 与 Python 标准库。Apple Silicon 请安装原生 arm64 PowerShell 7，并确保 Python 3.8 或更高版本可通过 `python3` 调用；启动器检测到疑似 Rosetta 版本时会给出提示。
 
 ```bash
 brew install --cask powershell
+brew install python
 pwsh -NoProfile -Command '[System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture'
 # 预期输出：Arm64
 
@@ -77,12 +84,14 @@ macOS 的共享默认目录为 `~/.codex`。不要为各个 Codex 启动器设�
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Invoke-SwitcherSelfTest.ps1
+python -m unittest -v tests.test_session_provider_sync
 ```
 
-此测试会验证所有模式、SQLite/JSONL provider 同步、未知 provider 保留、备份生成，以及 `Status`/`SkipThreadRewrite` 不改会话。测试路径不依赖具体平台；复制仓库到 macOS 后，可运行：
+测试会验证所有模式、全量基线复用与原子刷新、轻量日志保留、故障自动回滚、SQLite/JSONL provider 同步、未知 provider 保留，以及 `Status`/`SkipThreadRewrite` 不改会话。测试路径不依赖具体平台；复制仓库到 macOS 后，可运行：
 
 ```bash
 pwsh -NoProfile -File ./tests/Invoke-SwitcherSelfTest.ps1
+python3 -m unittest -v tests.test_session_provider_sync
 ```
 
 浏览器面板的隔离集成测试：
