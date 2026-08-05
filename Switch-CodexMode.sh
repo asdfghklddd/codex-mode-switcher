@@ -103,7 +103,7 @@ if [[ ! -f "$codex_home/config.toml" ]]; then
 fi
 
 export CODEX_HOME="$(cd -- "$codex_home" && pwd -P)"
-echo "CODEX_HOME（$codex_home_source）：$CODEX_HOME"
+echo "CODEX_HOME（${codex_home_source}）：$CODEX_HOME"
 
 for required_file in "$script" "$panel" "$sync_helper"; do
   if [[ ! -f "$required_file" ]]; then
