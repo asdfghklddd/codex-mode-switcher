@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -u
+
+app_contents="$(cd -- "$(dirname -- "$0")/.." && pwd)"
+resources="$app_contents/Resources"
+
+if [[ "$(uname -s)" == "Darwin" && -x /usr/libexec/path_helper ]]; then
+  eval "$(/usr/libexec/path_helper -s)"
+fi
+
+if [[ $# -gt 0 ]]; then
+  exec bash "$resources/Switch-CodexMode.sh" "$@"
+fi
+
+mode="${CODEX_MODE_SWITCHER_MODE:-ui}"
+if [[ "$mode" != "ui" ]]; then
+  exec bash "$resources/Switch-CodexMode.sh" "$mode"
+fi
+
+log_root="${TMPDIR:-/tmp}"
+log_path="$log_root/codex-mode-switcher.log"
+if bash "$resources/Switch-CodexMode.sh" ui >>"$log_path" 2>&1; then
+  exit 0
+fi
+
+if command -v osascript >/dev/null 2>&1; then
+  osascript - "$log_path" <<'APPLESCRIPT'
+on run argv
+  display alert "Codex 模式切换器启动失败" message ("请确认已安装 PowerShell 7 和 Python 3，然后查看日志：" & item 1 of argv) as critical
+end run
+APPLESCRIPT
+fi
+exit 1

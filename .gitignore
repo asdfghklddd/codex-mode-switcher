@@ -6,5 +6,6 @@ backup-*/
 auth.json
 *.bak
 *.tmp
+dist/
 __pycache__/
 *.pyc

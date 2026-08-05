@@ -34,6 +34,8 @@
 - `CodexModeSwitcher.html`：无依赖的面板界面。
 - `Switch-CodexMode.sh`：macOS/Linux 面板与命令行启动器。
 - `Switch-CodexMode.command`：macOS Finder 面板启动器。
+- `packaging/macos/`：macOS `.app` 包的启动入口与元数据。
+- `scripts/Build-WindowsRelease.ps1`、`scripts/build-macos-release.sh`：Release 打包脚本。
 - `tests/Invoke-SwitcherSelfTest.ps1`：隔离环境下的 provider 同步与备份测试。
 
 ## 使用方法
@@ -78,7 +80,18 @@ bash ./Switch-CodexMode.sh cockpit
 bash ./Switch-CodexMode.sh ccswitch
 ```
 
-macOS 的共享默认目录为 `~/.codex`。不要为各个 Codex 启动器设置不同的 `CODEX_HOME`，否则会产生彼此独立的本地状态和历史。启动前可用 `echo "$CODEX_HOME"` 检查 shell 值；空值表示使用共享默认目录。
+macOS 启动器支持 `--codex-home <绝对路径>`。目录选择顺序为：命令行参数、`CODEX_HOME` 环境变量、`$XDG_CONFIG_HOME/codex-mode-switcher/codex-home`（未设置时为 `~/.config/codex-mode-switcher/codex-home`），最后回退到 `~/.codex`。偏好文件只保存一行绝对路径，不会复制会话数据。启动时面板会显示实际使用的目录。
+
+不要为各个 Codex 启动器设置不同的 `CODEX_HOME`，否则会产生彼此独立的本地状态和历史。Finder 启动的 `.app` 不一定读取交互式 shell 的自定义环境变量；需要自定义目录时，优先使用上述偏好文件。
+
+## Release 包
+
+推送 `v*` 标签后，GitHub Actions 会发布两个资产：
+
+- macOS：`Codex Mode Switcher.app` 的 ZIP，解压后直接双击应用。
+- Windows：包含唯一主入口 `Switch-CodexMode.bat` 及其必要组件的 ZIP。
+
+macOS 应用未进行 Apple 开发者签名和公证，首次下载后可能需要右键选择“打开”；这不影响脚本本身的跨平台逻辑。
 
 ## 自测
 
@@ -92,6 +105,7 @@ python -m unittest -v tests.test_session_provider_sync
 ```bash
 pwsh -NoProfile -File ./tests/Invoke-SwitcherSelfTest.ps1
 python3 -m unittest -v tests.test_session_provider_sync
+./tests/Invoke-MacLauncherSelfTest.sh
 ```
 
 浏览器面板的隔离集成测试：

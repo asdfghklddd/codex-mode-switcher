@@ -171,6 +171,36 @@ function Read-RequestJson {
     return $body | ConvertFrom-Json
 }
 
+function Open-PanelUrl {
+    param([string]$Url)
+
+    if ($IsMacOS) {
+        $openCommand = Get-Command open -ErrorAction SilentlyContinue
+        if (-not $openCommand) {
+            throw "PATH 中找不到 macOS open 命令。"
+        }
+        & $openCommand.Source $Url
+        if ($LASTEXITCODE -ne 0) {
+            throw "macOS open 命令返回退出码 $LASTEXITCODE。"
+        }
+        return
+    }
+
+    if ($IsLinux) {
+        $openCommand = Get-Command xdg-open -ErrorAction SilentlyContinue
+        if (-not $openCommand) {
+            throw "PATH 中找不到 xdg-open。"
+        }
+        & $openCommand.Source $Url
+        if ($LASTEXITCODE -ne 0) {
+            throw "xdg-open 返回退出码 $LASTEXITCODE。"
+        }
+        return
+    }
+
+    Start-Process -FilePath $Url
+}
+
 $resolvedCodexHome = Resolve-CodexHome -Path $CodexHome
 $token = New-AccessToken
 $listenerResult = Start-LoopbackListener -RequestedPort $Port
@@ -184,7 +214,7 @@ Write-Host "Codex 模式切换器已在本机运行。完成后请关闭此终�
 
 if (-not $NoBrowser) {
     try {
-        Start-Process -FilePath $panelUrl
+        Open-PanelUrl -Url $panelUrl
     }
     catch {
         Write-Warning "无法自动打开浏览器。请手动打开此地址：$panelUrl"
