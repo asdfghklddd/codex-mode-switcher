@@ -1,0 +1,92 @@
+name: Build and publish release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "已存在的版本标签，例如 v1.0.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  package-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout selected tag
+        if: ${{ inputs.tag != '' }}
+        shell: pwsh
+        run: |
+          git fetch --tags origin
+          git checkout "${{ inputs.tag }}"
+      - name: Build Windows package
+        shell: pwsh
+        run: ./scripts/Build-WindowsRelease.ps1 -Version "${{ inputs.tag || github.ref_name }}" -OutputDirectory ./dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: dist/*.zip
+          if-no-files-found: error
+
+  package-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout selected tag
+        if: ${{ inputs.tag != '' }}
+        shell: bash
+        run: |
+          git fetch --tags origin
+          git checkout "${{ inputs.tag }}"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Ensure PowerShell 7 on macOS
+        shell: bash
+        run: command -v pwsh >/dev/null 2>&1 || brew install --cask powershell
+      - name: Run macOS launcher tests
+        shell: bash
+        run: ./tests/Invoke-MacLauncherSelfTest.sh
+      - name: Build macOS app package
+        shell: bash
+        run: ./scripts/build-macos-release.sh "${{ inputs.tag || github.ref_name }}" ./dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          path: dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    needs: [package-windows, package-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout selected tag
+        if: ${{ inputs.tag != '' }}
+        shell: bash
+        run: |
+          git fetch --tags origin
+          git checkout "${{ inputs.tag }}"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*-release'
+          path: dist
+          merge-multiple: true
+      - name: Create checksums
+        shell: bash
+        run: sha256sum dist/*.zip > dist/SHA256SUMS.txt
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        shell: bash
+        run: |
+          gh release create "$RELEASE_TAG" dist/* \
+            --verify-tag \
+            --title "Codex 模式切换器 $RELEASE_TAG" \
+            --notes-file packaging/RELEASE_NOTES.md

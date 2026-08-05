@@ -45,3 +45,5 @@ jobs:
         run: |
           bash -n ./Switch-CodexMode.sh
           bash -n ./Switch-CodexMode.command
+          bash -n ./tests/Invoke-MacLauncherSelfTest.sh
+          ./tests/Invoke-MacLauncherSelfTest.sh
