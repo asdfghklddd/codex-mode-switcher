@@ -1,5 +1,10 @@
 # Codex 模式切换器
 
+A small, cross-platform launcher for switching Codex provider modes while
+preserving one shared local history. The repository demonstrates defensive
+PowerShell/Python orchestration, transactional rollback, and a zero-dependency
+local web panel.
+
 用于在同一个共享 `CODEX_HOME` 中切换 Codex 顶层 provider 的小型 Windows/macOS 启动器。
 
 双击启动器会打开零依赖的本地 HTML 控制面板。页面只使用 HTML、CSS 与浏览器 JavaScript；PowerShell 桥接只监听 `127.0.0.1`，负责调用既有的安全切换脚本。每次启动都会生成随机令牌，所有本地 API 请求都必须携带该令牌。
@@ -107,6 +112,17 @@ pwsh -NoProfile -File ./tests/Invoke-SwitcherSelfTest.ps1
 python3 -m unittest -v tests.test_session_provider_sync
 ./tests/Invoke-MacLauncherSelfTest.sh
 ```
+
+## Public repository boundary
+
+This project is intentionally local-only. It binds the bridge to `127.0.0.1`,
+requires a per-launch random header token, and never contains a real `CODEX_HOME`,
+`auth.json`, SQLite database, session transcript, or API credential. Run the test
+suite only in its isolated temporary fixtures; do not point it at a production
+Codex directory during experimentation.
+
+The source is published for portfolio review. No redistribution or commercial-use
+license is granted.
 
 浏览器面板的隔离集成测试：
 
